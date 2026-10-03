@@ -1,0 +1,8 @@
+.git
+.gitignore
+.env
+*.log
+spatialwatch-server
+backend/spatialwatch-server
+*.test
+*.out
