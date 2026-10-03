@@ -134,23 +134,6 @@ go test -v ./...
 
 ---
 
-## Deployment Guidance
-
-### Go Backend
-
-The backend is a single binary. Build and deploy to any cloud provider:
-
-```bash
-cd backend
-CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -o spatialwatch-server .
-```
-
-Deploy to:
-- **Railway** / **Render** / **Fly.io** (recommended for hackathons)
-- **Google Cloud Run**
-- **AWS ECS / Lambda**
-- Any VPS with Go runtime
-
 ### Docker Deployment
 
 A lightweight, multi-stage production [`Dockerfile`](Dockerfile) is provided:
