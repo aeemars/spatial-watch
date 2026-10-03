@@ -1,6 +1,6 @@
 # Spatial Watch
 
-> A hands-first social cinema experience for Meta VR — built for the Meta VR Start Developer Competition 2026, Entertainment track.
+> **Spatial Watch** is a hands-first social virtual cinema for Meta VR devices and modern web browsers. It brings friends together into private virtual screening rooms to watch synchronized films with controller-free hand/pinch interactions, floating 3D spatial reactions, and an interactive "Director's Cut" scene commentary system — running entirely through WebXR with zero app installation.
 
 ![Spatial Watch](https://img.shields.io/badge/Platform-WebXR-blue) ![Go](https://img.shields.io/badge/Backend-Go-00ADD8) ![MongoDB](https://img.shields.io/badge/Database-MongoDB%20Atlas-47A248)
 
@@ -184,6 +184,18 @@ Deploy to:
 - **Google Cloud Run**
 - **AWS ECS / Lambda**
 - Any VPS with Go runtime
+
+### Docker Deployment
+
+A lightweight, multi-stage production [`Dockerfile`](Dockerfile) is provided:
+
+```bash
+# Build Docker image
+docker build -t spatialwatch .
+
+# Run container
+docker run -p 8080:8080 -e PORT=8080 spatialwatch
+```
 
 ### Static Frontend
 
