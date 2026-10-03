@@ -1,0 +1,310 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, interactive-widget=resizes-content">
+  <meta name="theme-color" content="#080A10">
+  <meta name="color-scheme" content="dark">
+  <meta name="description" content="Spatial Watch — a hands-first social cinema experience for Meta VR. Watch together in virtual reality.">
+  <title>Spatial Watch — Shared VR Cinema</title>
+
+  <!-- Fonts -->
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Playfair+Display:ital,wght@0,500;0,700;1,500&display=swap" rel="stylesheet">
+
+  <!-- Styles -->
+  <link rel="stylesheet" href="css/tokens.css">
+  <link rel="stylesheet" href="css/base.css">
+  <link rel="stylesheet" href="css/components.css">
+  <link rel="stylesheet" href="css/scenes.css">
+
+  <!-- Three.js for WebXR rendering -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r168/three.min.js"></script>
+</head>
+<body>
+  <div class="app-shell" id="app">
+
+    <!-- ═══════════════════════════════════════════════ -->
+    <!-- SCREEN 1: Landing / Entry                       -->
+    <!-- ═══════════════════════════════════════════════ -->
+    <section class="screen screen--landing" id="screen-landing" aria-label="Welcome to Spatial Watch">
+      <!-- Ambient light effect -->
+      <div class="hero-ambient" aria-hidden="true">
+        <div class="hero-ambient__beam"></div>
+        <div class="hero-ambient__glow"></div>
+      </div>
+
+      <div class="hero">
+        <header class="hero__header">
+          <div class="hero__badge chip chip--gold">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"/><circle cx="12" cy="13" r="4"/></svg>
+            Private Screening Room
+          </div>
+        </header>
+
+        <div class="hero__identity">
+          <h1 class="hero__title">
+            <span class="hero__wordmark">Spatial Watch</span>
+          </h1>
+          <p class="hero__subtitle">
+            A shared virtual cinema where friends gather, watch together, and experience film in spatial presence.
+          </p>
+        </div>
+
+        <div class="hero__actions">
+          <button class="btn btn--primary btn--lg" id="btn-create-room" type="button" aria-haspopup="dialog">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+            Create a Room
+          </button>
+          <button class="btn btn--secondary btn--lg" id="btn-join-room" type="button" aria-haspopup="dialog">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M15 3h4a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2h-4"/><polyline points="10 17 15 12 10 7"/><line x1="15" y1="12" x2="3" y2="12"/></svg>
+            Join with Code
+          </button>
+        </div>
+
+        <!-- Director's Cut preview card -->
+        <div class="card card--preview" id="directors-cut-preview">
+          <div class="card__header">
+            <span class="chip chip--violet">
+              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/></svg>
+              Director's Cut
+            </span>
+          </div>
+          <div class="card__body">
+            <p class="card__label text--secondary">Featured Commentary</p>
+            <p class="card__text">Unlock scene-by-scene commentary cues — creative choices, behind-the-scenes moments, and technical insights from the filmmaking process.</p>
+          </div>
+        </div>
+
+        <footer class="hero__footer">
+          <div class="xr-status" id="xr-status" aria-live="polite">
+            <span class="xr-status__indicator" id="xr-status-dot"></span>
+            <span class="xr-status__text" id="xr-status-text">Checking WebXR…</span>
+          </div>
+        </footer>
+      </div>
+    </section>
+
+    <!-- ═══════════════════════════════════════════════ -->
+    <!-- MODAL: Create Room                              -->
+    <!-- ═══════════════════════════════════════════════ -->
+    <div class="modal-overlay" id="modal-create" role="dialog" aria-labelledby="modal-create-title" aria-modal="true" hidden>
+      <div class="modal">
+        <div class="modal__header">
+          <h2 class="modal__title" id="modal-create-title">Create a Room</h2>
+          <button class="btn btn--ghost btn--icon modal__close" id="modal-create-close" type="button" aria-label="Close">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+          </button>
+        </div>
+        <div class="modal__body">
+          <div class="form-group">
+            <label class="label" for="create-name">Your Name</label>
+            <input class="input" id="create-name" type="text" placeholder="Enter your display name" autocomplete="nickname" enterkeyhint="go" maxlength="30" required>
+            <p class="helper-text" id="create-name-error" hidden></p>
+          </div>
+        </div>
+        <div class="modal__footer">
+          <button class="btn btn--primary btn--lg btn--full" id="btn-create-submit" type="button">
+            <span class="btn__label">Create Room</span>
+            <span class="btn__loading" hidden>
+              <span class="spinner" aria-label="Creating room"></span>
+            </span>
+          </button>
+        </div>
+      </div>
+    </div>
+
+    <!-- ═══════════════════════════════════════════════ -->
+    <!-- MODAL: Join Room                                -->
+    <!-- ═══════════════════════════════════════════════ -->
+    <div class="modal-overlay" id="modal-join" role="dialog" aria-labelledby="modal-join-title" aria-modal="true" hidden>
+      <div class="modal">
+        <div class="modal__header">
+          <h2 class="modal__title" id="modal-join-title">Join a Room</h2>
+          <button class="btn btn--ghost btn--icon modal__close" id="modal-join-close" type="button" aria-label="Close">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+          </button>
+        </div>
+        <div class="modal__body">
+          <div class="form-group">
+            <label class="label" for="join-code">Room Code</label>
+            <input class="input input--code" id="join-code" type="text" placeholder="SW-AB12" autocomplete="off" autocapitalize="characters" spellcheck="false" maxlength="7" required>
+            <p class="helper-text" id="join-code-error" hidden></p>
+          </div>
+          <div class="form-group">
+            <label class="label" for="join-name">Your Name</label>
+            <input class="input" id="join-name" type="text" placeholder="Enter your display name" autocomplete="nickname" enterkeyhint="go" maxlength="30" required>
+            <p class="helper-text" id="join-name-error" hidden></p>
+          </div>
+        </div>
+        <div class="modal__footer">
+          <button class="btn btn--primary btn--lg btn--full" id="btn-join-submit" type="button">
+            <span class="btn__label">Join Room</span>
+            <span class="btn__loading" hidden>
+              <span class="spinner" aria-label="Joining room"></span>
+            </span>
+          </button>
+        </div>
+      </div>
+    </div>
+
+    <!-- ═══════════════════════════════════════════════ -->
+    <!-- SCREEN 2: Room Lobby                            -->
+    <!-- ═══════════════════════════════════════════════ -->
+    <section class="screen screen--lobby" id="screen-lobby" aria-label="Room Lobby" hidden>
+      <div class="lobby">
+        <header class="lobby__header">
+          <div class="lobby__brand">
+            <span class="lobby__wordmark">Spatial Watch</span>
+          </div>
+          <div class="lobby__room-info">
+            <span class="lobby__code" id="lobby-room-code">SW-XXXX</span>
+            <span class="connection-status" id="lobby-connection-status">
+              <span class="connection-status__dot connection-status__dot--connecting"></span>
+              <span class="connection-status__text">Connecting…</span>
+            </span>
+          </div>
+        </header>
+
+        <div class="lobby__content">
+          <!-- Tonight's Screening Card -->
+          <div class="card card--screening">
+            <div class="card__header">
+              <h2 class="card__title">Tonight's Screening</h2>
+              <span class="chip chip--violet" id="lobby-dc-badge" hidden>
+                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/></svg>
+                Director's Cut
+              </span>
+            </div>
+            <div class="card__body">
+              <p class="card__media-title" id="lobby-media-title">Big Buck Bunny</p>
+              <p class="card__meta text--secondary" id="lobby-media-meta">Demo Film · 10:34</p>
+            </div>
+          </div>
+
+          <!-- Participants -->
+          <div class="card card--participants">
+            <div class="card__header">
+              <h3 class="card__title">
+                Guests
+                <span class="badge badge--count" id="lobby-participant-count">0</span>
+              </h3>
+            </div>
+            <ul class="participant-list" id="lobby-participant-list" role="list">
+              <!-- Participant items inserted by JS -->
+            </ul>
+          </div>
+        </div>
+
+        <footer class="lobby__footer">
+          <button class="btn btn--primary btn--lg btn--full" id="btn-enter-cinema" type="button">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polygon points="5 3 19 12 5 21 5 3"/></svg>
+            Enter Cinema
+          </button>
+          <button class="btn btn--ghost btn--sm" id="btn-leave-lobby" type="button">Leave Room</button>
+        </footer>
+      </div>
+    </section>
+
+    <!-- ═══════════════════════════════════════════════ -->
+    <!-- SCREEN 3: Cinema (Desktop + VR)                 -->
+    <!-- ═══════════════════════════════════════════════ -->
+    <section class="screen screen--cinema" id="screen-cinema" aria-label="Cinema" hidden>
+      <!-- Video element (hidden, used as texture source) -->
+      <video id="cinema-video" crossorigin="anonymous" playsinline preload="metadata" style="display:none;"></video>
+
+      <!-- Three.js / WebXR canvas -->
+      <canvas id="cinema-canvas" class="cinema-canvas"></canvas>
+
+      <!-- Desktop overlay controls -->
+      <div class="cinema-controls" id="cinema-controls">
+        <div class="cinema-controls__top">
+          <div class="cinema-controls__room-info">
+            <span class="cinema-controls__code" id="cinema-room-code">SW-XXXX</span>
+            <span class="badge badge--count" id="cinema-participant-badge">0</span>
+          </div>
+          <div class="cinema-controls__top-actions">
+            <button class="btn btn--ghost btn--icon" id="btn-cinema-dc" type="button" aria-label="Toggle Director's Cut" title="Director's Cut">
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/></svg>
+            </button>
+            <button class="btn btn--ghost btn--icon btn--danger" id="btn-cinema-exit" type="button" aria-label="Exit room" title="Exit Room">
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/></svg>
+            </button>
+          </div>
+        </div>
+
+        <div class="cinema-controls__bottom">
+          <!-- Timeline -->
+          <div class="cinema-controls__timeline">
+            <span class="cinema-controls__time" id="cinema-time-current">0:00</span>
+            <input type="range" class="cinema-controls__progress" id="cinema-progress" min="0" max="100" step="0.1" value="0" aria-label="Video progress">
+            <span class="cinema-controls__time" id="cinema-time-duration">0:00</span>
+          </div>
+
+          <!-- Playback controls -->
+          <div class="cinema-controls__playback">
+            <div class="cinema-controls__group">
+              <button class="btn btn--ghost btn--icon" id="btn-seek-back" type="button" aria-label="Back 10 seconds" title="Back 10s">
+                <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="1 4 1 10 7 10"/><path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10"/><text x="12" y="16" text-anchor="middle" fill="currentColor" stroke="none" font-size="8" font-weight="700">10</text></svg>
+              </button>
+
+              <button class="btn btn--primary btn--icon btn--play" id="btn-play-pause" type="button" aria-label="Play">
+                <svg class="icon-play" width="24" height="24" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><polygon points="5 3 19 12 5 21 5 3"/></svg>
+                <svg class="icon-pause" width="24" height="24" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true" style="display:none"><rect x="6" y="4" width="4" height="16"/><rect x="14" y="4" width="4" height="16"/></svg>
+              </button>
+
+              <button class="btn btn--ghost btn--icon" id="btn-seek-forward" type="button" aria-label="Forward 10 seconds" title="Forward 10s">
+                <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/><text x="12" y="16" text-anchor="middle" fill="currentColor" stroke="none" font-size="8" font-weight="700">10</text></svg>
+              </button>
+            </div>
+
+            <!-- Reactions -->
+            <div class="cinema-controls__group cinema-controls__reactions" id="reaction-tray">
+              <button class="btn btn--ghost btn--icon reaction-btn" data-reaction="applause" type="button" aria-label="Applause" title="Applause">👏</button>
+              <button class="btn btn--ghost btn--icon reaction-btn" data-reaction="laugh" type="button" aria-label="Laugh" title="Laugh">😂</button>
+              <button class="btn btn--ghost btn--icon reaction-btn" data-reaction="heart" type="button" aria-label="Heart" title="Heart">❤️</button>
+              <button class="btn btn--ghost btn--icon reaction-btn" data-reaction="surprised" type="button" aria-label="Surprised" title="Surprised">😮</button>
+              <button class="btn btn--ghost btn--icon reaction-btn" data-reaction="wow" type="button" aria-label="Wow" title="Wow">🤩</button>
+              <button class="btn btn--ghost btn--icon reaction-btn" data-reaction="popcorn" type="button" aria-label="Popcorn" title="Popcorn">🍿</button>
+            </div>
+
+            <div class="cinema-controls__group">
+              <button class="btn btn--ghost btn--icon" id="btn-enter-vr" type="button" aria-label="Enter VR" title="Enter VR" hidden>
+                <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="7" width="20" height="10" rx="3"/><path d="M7 17l2-2h6l2 2"/><circle cx="7" cy="12" r="1.5"/><circle cx="17" cy="12" r="1.5"/></svg>
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Director's Cut Commentary Card -->
+      <div class="commentary-card" id="commentary-card" hidden>
+        <div class="commentary-card__header">
+          <span class="chip chip--violet chip--sm" id="commentary-category">Behind the scenes</span>
+          <button class="btn btn--ghost btn--icon btn--sm commentary-card__dismiss" id="commentary-dismiss" type="button" aria-label="Dismiss commentary">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+          </button>
+        </div>
+        <h4 class="commentary-card__title" id="commentary-title">Opening Composition</h4>
+        <p class="commentary-card__body" id="commentary-body">Commentary text here.</p>
+      </div>
+
+      <!-- Reaction float container -->
+      <div class="reaction-float-container" id="reaction-container" aria-hidden="true"></div>
+    </section>
+
+    <!-- Toast container -->
+    <div class="toast-container" id="toast-container" aria-live="polite" role="status"></div>
+  </div>
+
+  <!-- Application scripts -->
+  <script src="js/api.js"></script>
+  <script src="js/websocket.js"></script>
+  <script src="js/reactions.js"></script>
+  <script src="js/directors-cut.js"></script>
+  <script src="js/cinema.js"></script>
+  <script src="js/xr.js"></script>
+  <script src="js/app.js"></script>
+</body>
+</html>

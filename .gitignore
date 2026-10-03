@@ -1,0 +1,66 @@
+# ═══════════════════════════════════════════════════════════
+# Spatial Watch — .gitignore
+# ═══════════════════════════════════════════════════════════
+
+# Environment variables & secrets
+.env
+.env.local
+.env.*.local
+*.pem
+*.key
+*.cert
+
+# Keep example environment file tracked
+!.env.example
+
+# Compiled binaries and executables
+spatialwatch-server
+backend/spatialwatch-server
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+*.test
+*.out
+bin/
+dist/
+build/
+
+# Go test / coverage artifacts
+coverage.txt
+coverage.out
+profile.out
+
+# Operating system files
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+desktop.ini
+
+# Logs & temporary files
+*.log
+logs/
+*.tmp
+*.bak
+*.swp
+*.swo
+*~
+
+# IDE & editor directories
+.idea/
+.vscode/
+*.sublime-project
+*.sublime-workspace
+
+# Node dependencies & package managers (if used)
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+.pnpm-debug.log*

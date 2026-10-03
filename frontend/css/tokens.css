@@ -1,0 +1,132 @@
+/* ═══════════════════════════════════════════════════════════
+   SPATIAL WATCH — Design Tokens
+   Premium dark cinema palette following Emil Kowalski principles
+   ═══════════════════════════════════════════════════════════ */
+
+:root {
+  /* ── Color System ── */
+  --bg:               #080A10;
+  --surface-1:        #0E111A;
+  --surface-2:        #151A26;
+  --surface-3:        #1C2331;
+  --surface-4:        #242D3D;
+
+  --border-subtle:    rgba(255, 255, 255, 0.06);
+  --border-default:   rgba(255, 255, 255, 0.10);
+  --border-strong:    rgba(255, 255, 255, 0.16);
+
+  --text-primary:     #F4F1EA;
+  --text-secondary:   #A7AFBF;
+  --text-tertiary:    #70798A;
+  --text-disabled:    #4A5264;
+
+  --gold:             #E7BC72;
+  --gold-bright:      #F5D69C;
+  --gold-dim:         #B8944E;
+  --gold-bg:          rgba(231, 188, 114, 0.10);
+
+  --violet:           #8F85D7;
+  --violet-dim:       #6A61A8;
+  --violet-bg:        rgba(143, 133, 215, 0.10);
+
+  --presence:         #83D0AE;
+  --presence-bg:      rgba(131, 208, 174, 0.10);
+
+  --danger:           #E67C7C;
+  --danger-bg:        rgba(230, 124, 124, 0.10);
+
+  --overlay:          rgba(4, 6, 10, 0.70);
+  --overlay-heavy:    rgba(4, 6, 10, 0.85);
+
+  /* ── Typography ── */
+  --font-body:        'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  --font-display:     'Playfair Display', 'Georgia', 'Times New Roman', serif;
+  --font-mono:        'JetBrains Mono', 'SF Mono', 'Fira Code', 'Cascadia Code', monospace;
+
+  --text-xs:          0.6875rem;   /* 11px */
+  --text-sm:          0.8125rem;   /* 13px */
+  --text-base:        0.9375rem;   /* 15px */
+  --text-md:          1.0625rem;   /* 17px */
+  --text-lg:          1.25rem;     /* 20px */
+  --text-xl:          1.5rem;      /* 24px */
+  --text-2xl:         2rem;        /* 32px */
+  --text-3xl:         2.75rem;     /* 44px */
+  --text-4xl:         3.5rem;      /* 56px */
+
+  --leading-tight:    1.2;
+  --leading-normal:   1.5;
+  --leading-relaxed:  1.65;
+
+  --weight-normal:    400;
+  --weight-medium:    500;
+  --weight-semi:      600;
+  --weight-bold:      700;
+
+  --tracking-tight:   -0.02em;
+  --tracking-normal:  0em;
+  --tracking-wide:    0.04em;
+
+  /* ── Spacing ── */
+  --space-1:          0.25rem;     /* 4px */
+  --space-2:          0.5rem;      /* 8px */
+  --space-3:          0.75rem;     /* 12px */
+  --space-4:          1rem;        /* 16px */
+  --space-5:          1.25rem;     /* 20px */
+  --space-6:          1.5rem;      /* 24px */
+  --space-8:          2rem;        /* 32px */
+  --space-10:         2.5rem;      /* 40px */
+  --space-12:         3rem;        /* 48px */
+  --space-16:         4rem;        /* 64px */
+  --space-20:         5rem;        /* 80px */
+
+  /* ── Radii ── */
+  --radius-sm:        6px;
+  --radius-md:        10px;
+  --radius-lg:        14px;
+  --radius-xl:        20px;
+  --radius-full:      9999px;
+
+  /* ── Shadows ── */
+  --shadow-sm:        0 1px 2px rgba(0, 0, 0, 0.3);
+  --shadow-md:        0 4px 12px rgba(0, 0, 0, 0.4);
+  --shadow-lg:        0 8px 32px rgba(0, 0, 0, 0.5);
+  --shadow-xl:        0 16px 64px rgba(0, 0, 0, 0.6);
+  --shadow-glow-gold: 0 0 30px rgba(231, 188, 114, 0.15);
+
+  /* ── Motion — following Emil's decision framework ── */
+  --ease-out:         cubic-bezier(0.23, 1, 0.32, 1);
+  --ease-in-out:      cubic-bezier(0.77, 0, 0.175, 1);
+  --ease-drawer:      cubic-bezier(0.32, 0.72, 0, 1);
+
+  --duration-press:   120ms;
+  --duration-small:   160ms;
+  --duration-medium:  220ms;
+  --duration-dialog:  280ms;
+  --duration-slow:    400ms;
+
+  /* ── Z-index layers ── */
+  --z-base:           0;
+  --z-surface:        10;
+  --z-controls:       100;
+  --z-overlay:        200;
+  --z-modal:          300;
+  --z-toast:          400;
+  --z-tooltip:        500;
+
+  /* ── Safe areas ── */
+  --safe-top:         env(safe-area-inset-top, 0px);
+  --safe-right:       env(safe-area-inset-right, 0px);
+  --safe-bottom:      env(safe-area-inset-bottom, 0px);
+  --safe-left:        env(safe-area-inset-left, 0px);
+}
+
+/* ── Reduced motion preference ── */
+@media (prefers-reduced-motion: reduce) {
+  :root {
+    --duration-press:   0ms;
+    --duration-small:   0ms;
+    --duration-medium:  0ms;
+    --duration-dialog:  80ms;
+    --duration-slow:    100ms;
+  }
+}
