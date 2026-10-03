@@ -1,0 +1,76 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" fill="none">
+  <defs>
+    <!-- Background Gradient: Obsidian Slate to Midnight -->
+    <linearGradient id="sw-bg" x1="0" y1="0" x2="64" y2="64" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stop-color="#1A2030"/>
+      <stop offset="50%" stop-color="#0E121B"/>
+      <stop offset="100%" stop-color="#06080E"/>
+    </linearGradient>
+
+    <!-- Metallic Warm Gold Gradient -->
+    <linearGradient id="sw-gold" x1="16" y1="16" x2="48" y2="48" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stop-color="#FFF3DC"/>
+      <stop offset="25%" stop-color="#F2D18D"/>
+      <stop offset="65%" stop-color="#D9A84E"/>
+      <stop offset="100%" stop-color="#9C6B1C"/>
+    </linearGradient>
+
+    <!-- Holographic Violet Spatial Hue -->
+    <linearGradient id="sw-violet" x1="10" y1="16" x2="54" y2="48" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stop-color="#B2A6F5"/>
+      <stop offset="50%" stop-color="#8F85D7"/>
+      <stop offset="100%" stop-color="#55499E"/>
+    </linearGradient>
+
+    <!-- Outer Rim Glow -->
+    <linearGradient id="sw-rim" x1="0" y1="0" x2="64" y2="64" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stop-color="rgba(242, 209, 141, 0.75)"/>
+      <stop offset="45%" stop-color="rgba(143, 133, 215, 0.45)"/>
+      <stop offset="100%" stop-color="rgba(217, 168, 78, 0.2)"/>
+    </linearGradient>
+
+    <!-- Glowing Projector Spotlight -->
+    <radialGradient id="sw-spotlight" cx="50%" cy="28%" r="60%">
+      <stop offset="0%" stop-color="rgba(242, 209, 141, 0.28)"/>
+      <stop offset="40%" stop-color="rgba(143, 133, 215, 0.12)"/>
+      <stop offset="100%" stop-color="rgba(0, 0, 0, 0)"/>
+    </radialGradient>
+
+    <!-- Soft Glow Filter -->
+    <filter id="sw-glow" x="-20%" y="-20%" width="140%" height="140%">
+      <feGaussianBlur stdDeviation="1.8" result="blur"/>
+      <feComposite in="SourceGraphic" in2="blur" operator="over"/>
+    </filter>
+  </defs>
+
+  <!-- 1. Base Squircle Vessel -->
+  <rect x="2" y="2" width="60" height="60" rx="16" fill="url(#sw-bg)" stroke="url(#sw-rim)" stroke-width="1.5"/>
+
+  <!-- 2. Ambient Projector Cone Glow -->
+  <rect x="3" y="3" width="58" height="58" rx="15" fill="url(#sw-spotlight)"/>
+
+  <!-- 3. Spatial Horizon / VR Orbit Ring -->
+  <ellipse cx="32" cy="32" rx="24" ry="14" stroke="rgba(242, 209, 141, 0.2)" stroke-width="1" stroke-dasharray="3 3"/>
+
+  <!-- 4. Projector Light Rays (Spatial Projection) -->
+  <path d="M 32 12 L 10 23 M 32 12 L 54 23" stroke="rgba(242, 209, 141, 0.3)" stroke-width="1" stroke-linecap="round"/>
+  <polygon points="32,13 52,41 12,41" fill="rgba(143, 133, 215, 0.05)"/>
+
+  <!-- 5. Curved Virtual Cinema Screen Surface -->
+  <path d="M 10 23 C 22 18, 42 18, 54 23 L 54 41 C 42 46, 22 46, 10 41 Z" 
+        fill="rgba(13, 17, 26, 0.85)" 
+        stroke="url(#sw-violet)" 
+        stroke-width="1.4" 
+        stroke-linejoin="round"/>
+
+  <!-- 6. Screen Top & Bottom Rim Highlights -->
+  <path d="M 11 23.5 C 22 19, 42 19, 53 23.5" stroke="url(#sw-gold)" stroke-width="1.8" stroke-linecap="round"/>
+  <path d="M 13 40 C 23 44, 41 44, 51 40" stroke="rgba(143, 133, 215, 0.45)" stroke-width="1.2" stroke-linecap="round"/>
+
+  <!-- 7. Central Radiant Play Prism (Cinema Presence) -->
+  <polygon points="26,24.5 42,32 26,39.5" fill="url(#sw-gold)" filter="url(#sw-glow)"/>
+
+  <!-- 8. Spark of Spatial Light -->
+  <circle cx="49" cy="24" r="1.6" fill="#FFF3DC"/>
+  <circle cx="15" cy="40" r="1.3" fill="#8F85D7"/>
+</svg>

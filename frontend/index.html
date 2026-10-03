@@ -8,6 +8,11 @@
   <meta name="description" content="Spatial Watch — a hands-first social cinema experience for Meta VR. Watch together in virtual reality.">
   <title>Spatial Watch — Shared VR Cinema</title>
 
+  <!-- Favicon & Touch Icon -->
+  <link rel="icon" type="image/svg+xml" href="assets/logo.svg">
+  <link rel="alternate icon" href="favicon.svg">
+  <link rel="apple-touch-icon" href="apple-touch-icon.png">
+
   <!-- Fonts -->
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -44,6 +49,9 @@
         </header>
 
         <div class="hero__identity">
+          <div class="hero__logo-wrapper" aria-hidden="true">
+            <img src="assets/logo.svg" alt="Spatial Watch Logo" class="hero__logo" width="44" height="44">
+          </div>
           <h1 class="hero__title">
             <span class="hero__wordmark">Spatial Watch</span>
           </h1>
@@ -156,6 +164,7 @@
       <div class="lobby">
         <header class="lobby__header">
           <div class="lobby__brand">
+            <img src="assets/logo.svg" alt="Spatial Watch Logo" class="lobby__logo" width="24" height="24" aria-hidden="true">
             <span class="lobby__wordmark">Spatial Watch</span>
           </div>
           <div class="lobby__room-info">
@@ -221,6 +230,7 @@
       <div class="cinema-controls" id="cinema-controls">
         <div class="cinema-controls__top">
           <div class="cinema-controls__room-info">
+            <img src="assets/logo.svg" alt="Spatial Watch Logo" class="cinema-controls__logo" width="18" height="18" aria-hidden="true">
             <span class="cinema-controls__code" id="cinema-room-code">SW-XXXX</span>
             <span class="badge badge--count" id="cinema-participant-badge">0</span>
           </div>
