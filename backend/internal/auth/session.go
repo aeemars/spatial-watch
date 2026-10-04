@@ -120,8 +120,8 @@ func (s *AuthService) GetOrCreateSession(w http.ResponseWriter, r *http.Request)
 				return &sanitized, nil
 			}
 		}
-		// If session is unknown, expired, or user not found, clear stale cookie
-		s.ClearSessionCookie(w)
+		// If session is unknown, expired, or user not found, fall through to create a fresh guest session.
+		// NOTE: Do not call ClearSessionCookie here, because SetSessionCookie below will overwrite it cleanly.
 	}
 
 	// 2. Rate limit new guest creation per client IP
@@ -245,8 +245,9 @@ func (s *AuthService) SetSessionCookie(w http.ResponseWriter, rawToken string) {
 		Secure:   s.cfg.CookieSecure,
 		SameSite: http.SameSiteLaxMode,
 	}
-	if s.cfg.CookieDomain != "" {
-		cookie.Domain = s.cfg.CookieDomain
+	domain := strings.TrimSpace(s.cfg.CookieDomain)
+	if domain != "" && !strings.EqualFold(domain, "localhost") && domain != "127.0.0.1" && strings.Contains(domain, ".") {
+		cookie.Domain = domain
 	}
 	http.SetCookie(w, cookie)
 }
@@ -263,8 +264,9 @@ func (s *AuthService) ClearSessionCookie(w http.ResponseWriter) {
 		Secure:   s.cfg.CookieSecure,
 		SameSite: http.SameSiteLaxMode,
 	}
-	if s.cfg.CookieDomain != "" {
-		cookie.Domain = s.cfg.CookieDomain
+	domain := strings.TrimSpace(s.cfg.CookieDomain)
+	if domain != "" && !strings.EqualFold(domain, "localhost") && domain != "127.0.0.1" && strings.Contains(domain, ".") {
+		cookie.Domain = domain
 	}
 	http.SetCookie(w, cookie)
 }

@@ -5,8 +5,9 @@
 
 const API = (() => {
   const BASE = window.location.origin;
+  let sessionPromise = null;
 
-  async function request(method, path, body) {
+  async function request(method, path, body, isRetry = false) {
     const opts = {
       method,
       headers: { 'Content-Type': 'application/json' },
@@ -20,6 +21,16 @@ const API = (() => {
       return null;
     }
 
+    // Auto-recovery on 401: if unauthorized on a non-auth endpoint, refresh session and retry once
+    if (res.status === 401 && !isRetry && !path.startsWith('/api/auth/')) {
+      try {
+        await getSession();
+        return await request(method, path, body, true);
+      } catch (authErr) {
+        console.warn('[api] session auto-recovery failed:', authErr);
+      }
+    }
+
     const data = await res.json().catch(() => ({}));
 
     if (!res.ok) {
@@ -28,11 +39,18 @@ const API = (() => {
     return data;
   }
 
+  function getSession() {
+    if (!sessionPromise) {
+      sessionPromise = request('GET', '/api/auth/session').finally(() => {
+        sessionPromise = null;
+      });
+    }
+    return sessionPromise;
+  }
+
   return {
-    /** Get or create authenticated guest session */
-    getSession() {
-      return request('GET', '/api/auth/session');
-    },
+    /** Get or create authenticated guest session (deduplicated) */
+    getSession,
 
     /** Update guest profile display name */
     updateProfile(displayName) {

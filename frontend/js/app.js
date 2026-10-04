@@ -133,21 +133,36 @@ const App = (() => {
   }
 
   // ─── Guest Session & Identity ─────────────────────
+  let sessionInitPromise = null;
+
+  function ensureSession() {
+    if (currentUser) return Promise.resolve(currentUser);
+    if (!sessionInitPromise) {
+      sessionInitPromise = initSession();
+    }
+    return sessionInitPromise;
+  }
 
   async function initSession() {
     try {
       const data = await API.getSession();
       currentUser = data.user;
       applyCurrentUser();
+      return currentUser;
     } catch (err) {
       console.warn('[auth] session initialization failed, retrying:', err);
-      showToast('Your guest session was refreshed', 'info');
       try {
         const retry = await API.getSession();
         currentUser = retry.user;
         applyCurrentUser();
+        return currentUser;
       } catch (e) {
         console.error('[auth] could not initialize session:', e);
+        const chipName = document.getElementById('profile-chip-name');
+        if (chipName && chipName.textContent === 'Loading…') {
+          chipName.textContent = 'Guest';
+        }
+        return null;
       }
     }
   }
@@ -231,6 +246,11 @@ const App = (() => {
     const modal = document.getElementById(id);
     if (!modal) return;
 
+    // Ensure session is loaded and inputs pre-filled
+    ensureSession().then(() => {
+      applyCurrentUser();
+    });
+
     // Refresh prefilled names when opening modals
     if (id === 'modal-create' && currentUser) {
       const input = document.getElementById('create-name');
@@ -270,6 +290,18 @@ const App = (() => {
     const nameInput = document.getElementById('create-name');
     const nameError = document.getElementById('create-name-error');
     const submitBtn = document.getElementById('btn-create-submit');
+
+    // Loading state
+    submitBtn.classList.add('btn--loading');
+    submitBtn.disabled = true;
+
+    // Ensure session is ready before attempting room creation
+    try {
+      await ensureSession();
+    } catch (e) {
+      // Proceed; API client will attempt transparent retry
+    }
+
     let name = nameInput.value.trim();
     if (!name && currentUser) {
       name = currentUser.displayName;
@@ -280,15 +312,13 @@ const App = (() => {
       nameError.textContent = 'Please enter a display name (2-32 characters)';
       nameError.hidden = false;
       nameInput.classList.add('input--error');
+      submitBtn.classList.remove('btn--loading');
+      submitBtn.disabled = false;
       return;
     }
 
     nameError.hidden = true;
     nameInput.classList.remove('input--error');
-
-    // Loading state
-    submitBtn.classList.add('btn--loading');
-    submitBtn.disabled = true;
 
     try {
       const data = await API.createRoom(name);
@@ -319,6 +349,15 @@ const App = (() => {
     const nameError = document.getElementById('join-name-error');
     const submitBtn = document.getElementById('btn-join-submit');
 
+    submitBtn.classList.add('btn--loading');
+    submitBtn.disabled = true;
+
+    try {
+      await ensureSession();
+    } catch (e) {
+      // Proceed; API client will attempt transparent retry
+    }
+
     const code = codeInput.value.trim().toUpperCase();
     let name = nameInput.value.trim();
     if (!name && currentUser) {
@@ -347,10 +386,11 @@ const App = (() => {
       nameInput.classList.remove('input--error');
     }
 
-    if (!valid) return;
-
-    submitBtn.classList.add('btn--loading');
-    submitBtn.disabled = true;
+    if (!valid) {
+      submitBtn.classList.remove('btn--loading');
+      submitBtn.disabled = false;
+      return;
+    }
 
     try {
       const data = await API.joinRoom(code, name);
@@ -799,6 +839,10 @@ const App = (() => {
 })();
 
 // ─── Bootstrap ──────────────────────────────────────
-document.addEventListener('DOMContentLoaded', () => {
+if (document.readyState === 'loading') {
+  document.addEventListener('DOMContentLoaded', () => {
+    App.init();
+  });
+} else {
   App.init();
-});
+}

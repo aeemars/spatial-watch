@@ -50,6 +50,13 @@ func Load() *Config {
 		}
 	}
 
+	// Safety safeguard for local development: if PUBLIC_BASE_URL is plain http://localhost or http://127.0.0.1,
+	// do not force Secure=true as local browsers will discard the cookie over non-TLS connections.
+	publicURL := getEnv("PUBLIC_BASE_URL", "")
+	if strings.HasPrefix(strings.ToLower(publicURL), "http://localhost") || strings.HasPrefix(strings.ToLower(publicURL), "http://127.0.0.1") {
+		cookieSecure = false
+	}
+
 	var corsOrigins []string
 	if rawCORS := getEnv("CORS_ALLOWED_ORIGINS", ""); rawCORS != "" {
 		for _, o := range strings.Split(rawCORS, ",") {

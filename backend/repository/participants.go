@@ -29,26 +29,40 @@ func NewParticipantRepo(db *mongo.Database) *ParticipantRepo {
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
 
+		// Drop old restrictive participantId_1 unique index if present
+		_ = col.Indexes().DropOne(ctx, "participantId_1")
+
 		// Index on roomCode for quick lookup
 		col.Indexes().CreateOne(ctx, mongo.IndexModel{
 			Keys: bson.D{{Key: "roomCode", Value: 1}},
 		})
-		// Unique index on participantId
+		// Non-unique index on participantId
 		col.Indexes().CreateOne(ctx, mongo.IndexModel{
-			Keys:    bson.D{{Key: "participantId", Value: 1}},
-			Options: options.Index().SetUnique(true),
+			Keys: bson.D{{Key: "participantId", Value: 1}},
 		})
 		repo.col = col
 	}
 	return repo
 }
 
-// Create inserts a new participant
+// Create inserts or updates an active participant record
 func (r *ParticipantRepo) Create(ctx context.Context, p *models.Participant) error {
 	p.JoinedAt = time.Now()
 	p.LastSeenAt = time.Now()
 	if r.col != nil {
-		_, err := r.col.InsertOne(ctx, p)
+		opts := options.UpdateOne().SetUpsert(true)
+		_, err := r.col.UpdateOne(ctx,
+			bson.M{"participantId": p.ParticipantID},
+			bson.M{
+				"$set": bson.M{
+					"roomCode":    p.RoomCode,
+					"displayName": p.DisplayName,
+					"joinedAt":    p.JoinedAt,
+					"lastSeenAt":  p.LastSeenAt,
+				},
+			},
+			opts,
+		)
 		return err
 	}
 	r.mu.Lock()
