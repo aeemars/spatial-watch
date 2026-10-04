@@ -3,50 +3,50 @@ package models
 import (
 	"time"
 
-	"go.mongodb.org/mongo-driver/bson/primitive"
+	"go.mongodb.org/mongo-driver/v2/bson"
 )
 
 // Room represents a watch room
 type Room struct {
-	ID                      primitive.ObjectID `bson:"_id,omitempty" json:"id"`
-	RoomCode                string             `bson:"roomCode" json:"roomCode"`
-	HostParticipantID       string             `bson:"hostParticipantId" json:"hostParticipantId"`
-	MediaURL                string             `bson:"mediaUrl" json:"mediaUrl"`
-	PlaybackPositionSeconds float64            `bson:"playbackPositionSeconds" json:"playbackPositionSeconds"`
-	IsPaused                bool               `bson:"isPaused" json:"isPaused"`
-	DirectorCutEnabled      bool               `bson:"directorCutEnabled" json:"directorCutEnabled"`
-	CreatedAt               time.Time          `bson:"createdAt" json:"createdAt"`
-	UpdatedAt               time.Time          `bson:"updatedAt" json:"updatedAt"`
+	ID                      bson.ObjectID `bson:"_id,omitempty" json:"id"`
+	RoomCode                string        `bson:"roomCode" json:"roomCode"`
+	HostParticipantID       string        `bson:"hostParticipantId" json:"hostParticipantId"`
+	MediaURL                string        `bson:"mediaUrl" json:"mediaUrl"`
+	PlaybackPositionSeconds float64       `bson:"playbackPositionSeconds" json:"playbackPositionSeconds"`
+	IsPaused                bool          `bson:"isPaused" json:"isPaused"`
+	DirectorCutEnabled      bool          `bson:"directorCutEnabled" json:"directorCutEnabled"`
+	CreatedAt               time.Time     `bson:"createdAt" json:"createdAt"`
+	UpdatedAt               time.Time     `bson:"updatedAt" json:"updatedAt"`
 }
 
 // Participant represents a user in a room
 type Participant struct {
-	ID            primitive.ObjectID `bson:"_id,omitempty" json:"id"`
-	ParticipantID string             `bson:"participantId" json:"participantId"`
-	RoomCode      string             `bson:"roomCode" json:"roomCode"`
-	DisplayName   string             `bson:"displayName" json:"displayName"`
-	JoinedAt      time.Time          `bson:"joinedAt" json:"joinedAt"`
-	LastSeenAt    time.Time          `bson:"lastSeenAt" json:"lastSeenAt"`
+	ID            bson.ObjectID `bson:"_id,omitempty" json:"id"`
+	ParticipantID string        `bson:"participantId" json:"participantId"`
+	RoomCode      string        `bson:"roomCode" json:"roomCode"`
+	DisplayName   string        `bson:"displayName" json:"displayName"`
+	JoinedAt      time.Time     `bson:"joinedAt" json:"joinedAt"`
+	LastSeenAt    time.Time     `bson:"lastSeenAt" json:"lastSeenAt"`
 }
 
 // CommentaryCue represents a Director's Cut commentary entry
 type CommentaryCue struct {
-	ID               primitive.ObjectID `bson:"_id,omitempty" json:"id"`
-	RoomCode         string             `bson:"roomCode" json:"roomCode"`
-	TemplateRef      string             `bson:"templateRef" json:"templateRef"`
-	TimestampSeconds float64            `bson:"timestampSeconds" json:"timestampSeconds"`
-	Title            string             `bson:"title" json:"title"`
-	Body             string             `bson:"body" json:"body"`
-	Category         string             `bson:"category" json:"category"`
+	ID               bson.ObjectID `bson:"_id,omitempty" json:"id"`
+	RoomCode         string        `bson:"roomCode" json:"roomCode"`
+	TemplateRef      string        `bson:"templateRef" json:"templateRef"`
+	TimestampSeconds float64       `bson:"timestampSeconds" json:"timestampSeconds"`
+	Title            string        `bson:"title" json:"title"`
+	Body             string        `bson:"body" json:"body"`
+	Category         string        `bson:"category" json:"category"`
 }
 
 // Reaction represents a user reaction event
 type Reaction struct {
-	ID            primitive.ObjectID `bson:"_id,omitempty" json:"id"`
-	RoomCode      string             `bson:"roomCode" json:"roomCode"`
-	ParticipantID string             `bson:"participantId" json:"participantId"`
-	ReactionType  string             `bson:"reactionType" json:"reactionType"`
-	CreatedAt     time.Time          `bson:"createdAt" json:"createdAt"`
+	ID            bson.ObjectID `bson:"_id,omitempty" json:"id"`
+	RoomCode      string        `bson:"roomCode" json:"roomCode"`
+	ParticipantID string        `bson:"participantId" json:"participantId"`
+	ReactionType  string        `bson:"reactionType" json:"reactionType"`
+	CreatedAt     time.Time     `bson:"createdAt" json:"createdAt"`
 }
 
 // CreateRoomRequest is the request body for creating a room

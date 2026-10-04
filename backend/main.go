@@ -13,9 +13,9 @@ import (
 	"time"
 
 	"github.com/gorilla/mux"
-	"go.mongodb.org/mongo-driver/mongo"
-	"go.mongodb.org/mongo-driver/mongo/options"
-	"go.mongodb.org/mongo-driver/mongo/readpref"
+	"go.mongodb.org/mongo-driver/v2/mongo"
+	"go.mongodb.org/mongo-driver/v2/mongo/options"
+	"go.mongodb.org/mongo-driver/v2/mongo/readpref"
 
 	"spatialwatch/config"
 	"spatialwatch/handlers"
@@ -31,15 +31,15 @@ func main() {
 	log.Printf("  Port: %d", cfg.Port)
 	log.Printf("  Database: %s", cfg.DatabaseName)
 
-	// Attempt MongoDB connection with 2s timeout, fallback to in-memory store
+	// Attempt MongoDB connection with v2 driver (2s ping timeout, fallback to in-memory store)
 	var db *mongo.Database
 	if cfg.MongoURI != "" && !strings.Contains(cfg.MongoURI, "<user>") {
-		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 		clientOpts := options.Client().ApplyURI(cfg.MongoURI)
-		mongoClient, err := mongo.Connect(ctx, clientOpts)
+		mongoClient, err := mongo.Connect(clientOpts)
 		if err == nil {
+			ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 			if err := mongoClient.Ping(ctx, readpref.Primary()); err == nil {
-				log.Println("  MongoDB connected successfully")
+				log.Println("  MongoDB connected successfully (Driver v2)")
 				db = mongoClient.Database(cfg.DatabaseName)
 				defer func() {
 					if err := mongoClient.Disconnect(context.Background()); err != nil {
@@ -49,10 +49,10 @@ func main() {
 			} else {
 				log.Printf("MongoDB ping: %v — falling back to in-memory store", err)
 			}
+			cancel()
 		} else {
 			log.Printf("MongoDB connect error: %v — falling back to in-memory store", err)
 		}
-		cancel()
 	}
 
 	if db == nil {
