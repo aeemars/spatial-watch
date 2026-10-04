@@ -35,12 +35,12 @@
     <!-- ═══════════════════════════════════════════════ -->
     <section class="screen screen--landing" id="screen-landing" aria-label="Welcome to Spatial Watch">
       <!-- Top-Left Brand Anchor -->
-      <div class="landing-top-brand">
+      <a href="/" class="landing-top-brand brand-home-link" aria-label="Spatial Watch Homepage" title="Spatial Watch Homepage">
         <div class="landing-top-brand__logo-wrapper" aria-hidden="true">
           <img src="assets/logo.svg" alt="Spatial Watch Logo" class="landing-top-brand__logo" width="34" height="34">
         </div>
         <span class="landing-top-brand__title">Spatial Watch</span>
-      </div>
+      </a>
 
       <!-- Top-Right Guest Profile Anchor -->
       <div class="landing-top-profile" id="landing-profile-anchor">
@@ -219,10 +219,10 @@
     <section class="screen screen--lobby" id="screen-lobby" aria-label="Room Lobby" hidden>
       <div class="lobby">
         <header class="lobby__header">
-          <div class="lobby__brand">
+          <a href="/" class="lobby__brand brand-home-link" aria-label="Spatial Watch Homepage" title="Return to Homepage">
             <img src="assets/logo.svg" alt="Spatial Watch Logo" class="lobby__logo" width="24" height="24" aria-hidden="true">
             <span class="lobby__wordmark">Spatial Watch</span>
-          </div>
+          </a>
           <div class="lobby__room-info">
             <span class="lobby__code" id="lobby-room-code">SW-XXXX</span>
             <span class="connection-status" id="lobby-connection-status">
@@ -286,7 +286,9 @@
       <div class="cinema-controls" id="cinema-controls">
         <div class="cinema-controls__top">
           <div class="cinema-controls__room-info">
-            <img src="assets/logo.svg" alt="Spatial Watch Logo" class="cinema-controls__logo" width="18" height="18" aria-hidden="true">
+            <a href="/" class="cinema-controls__brand brand-home-link" aria-label="Spatial Watch Homepage" title="Return to Homepage">
+              <img src="assets/logo.svg" alt="Spatial Watch Logo" class="cinema-controls__logo" width="18" height="18" aria-hidden="true">
+            </a>
             <span class="cinema-controls__code" id="cinema-room-code">SW-XXXX</span>
             <span class="badge badge--count" id="cinema-participant-badge">0</span>
           </div>

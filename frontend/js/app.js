@@ -24,6 +24,14 @@ const App = (() => {
     // Initialize authenticated guest session
     initSession();
 
+    // Bind brand logo links to return to homepage from anywhere
+    document.querySelectorAll('.brand-home-link').forEach(link => {
+      link.addEventListener('click', (e) => {
+        e.preventDefault();
+        goHome();
+      });
+    });
+
     // Bind landing buttons
     document.getElementById('btn-create-room').addEventListener('click', () => openModal('modal-create'));
     document.getElementById('btn-join-room').addEventListener('click', () => openModal('modal-join'));
@@ -759,7 +767,7 @@ const App = (() => {
     });
   }
 
-  // ─── Leave Room ───────────────────────────────────
+  // ─── Leave Room & Navigation ─────────────────────
 
   function leaveRoom() {
     WS.disconnect();
@@ -774,6 +782,29 @@ const App = (() => {
 
     showScreen('landing');
     showToast('Left room');
+  }
+
+  function goHome() {
+    // If in lobby or cinema, cleanly exit the room session
+    if (currentScreen !== 'landing') {
+      leaveRoom();
+    }
+
+    // Close any open modals
+    closeModal('modal-create');
+    closeModal('modal-join');
+    closeModal('modal-profile');
+
+    // Display landing screen
+    showScreen('landing');
+
+    // Scroll to top
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+
+    // Clean up URL search/hash if present
+    if (window.location.search || window.location.hash) {
+      window.history.pushState({}, '', window.location.pathname);
+    }
   }
 
   // ─── Toast Notifications ──────────────────────────
@@ -835,6 +866,7 @@ const App = (() => {
     showToast,
     leaveRoom,
     showScreen,
+    goHome,
   };
 })();
 

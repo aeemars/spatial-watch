@@ -78,6 +78,31 @@
   gap: var(--space-3);
   user-select: none;
   text-decoration: none;
+  cursor: pointer;
+  outline: none;
+  border-radius: var(--radius-md);
+  transition: opacity var(--duration-fast) var(--ease-out);
+}
+
+.brand-home-link {
+  text-decoration: none;
+  cursor: pointer;
+  outline: none;
+}
+
+.brand-home-link:focus-visible {
+  outline: 2px solid var(--gold);
+  outline-offset: 4px;
+  border-radius: var(--radius-sm);
+}
+
+.landing-top-brand:hover {
+  opacity: 0.95;
+}
+
+.landing-top-brand:focus-visible {
+  outline: 2px solid var(--gold);
+  outline-offset: 4px;
 }
 
 .landing-top-brand__logo-wrapper {
@@ -245,6 +270,24 @@
   display: flex;
   align-items: center;
   gap: var(--space-2);
+  text-decoration: none;
+  cursor: pointer;
+  border-radius: var(--radius-sm);
+  outline: none;
+  transition: opacity var(--duration-fast) var(--ease-out);
+}
+
+.lobby__brand:hover {
+  opacity: 0.9;
+}
+
+.lobby__brand:hover .lobby__logo {
+  transform: scale(1.08);
+}
+
+.lobby__brand:focus-visible {
+  outline: 2px solid var(--gold);
+  outline-offset: 4px;
 }
 
 .lobby__logo {
@@ -357,11 +400,31 @@
   -webkit-backdrop-filter: blur(12px);
 }
 
+.cinema-controls__brand {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  border-radius: 4px;
+  outline: none;
+  transition: opacity var(--duration-fast) var(--ease-out);
+}
+
+.cinema-controls__brand:hover .cinema-controls__logo {
+  transform: scale(1.18);
+}
+
+.cinema-controls__brand:focus-visible {
+  outline: 2px solid var(--gold);
+  outline-offset: 2px;
+}
+
 .cinema-controls__logo {
   width: 18px;
   height: 18px;
   border-radius: 4px;
   display: block;
+  transition: transform var(--duration-fast) var(--ease-out);
 }
 
 .cinema-controls__code {
