@@ -15,7 +15,7 @@ const WS = (() => {
 
   function getWSUrl() {
     const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
-    return `${proto}//${location.host}/ws?roomCode=${encodeURIComponent(roomCode)}&participantId=${encodeURIComponent(participantId)}`;
+    return `${proto}//${location.host}/ws?roomCode=${encodeURIComponent(roomCode)}`;
   }
 
   function connect() {
@@ -129,9 +129,8 @@ const WS = (() => {
 
   return {
     /** Initialize and connect */
-    init(code, pid) {
+    init(code) {
       roomCode = code;
-      participantId = pid;
       connect();
     },
 

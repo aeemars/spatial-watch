@@ -13,11 +13,16 @@ const App = (() => {
   let isHost = false;
   let participants = [];
   let controlHideTimer = null;
+  let currentUser = null;
+  let hostParticipantId = '';
 
   // ─── Initialization ───────────────────────────────
   function init() {
     // Check WebXR support
     XR.checkSupport();
+
+    // Initialize authenticated guest session
+    initSession();
 
     // Bind landing buttons
     document.getElementById('btn-create-room').addEventListener('click', () => openModal('modal-create'));
@@ -26,6 +31,33 @@ const App = (() => {
     // Bind modal close buttons
     document.getElementById('modal-create-close').addEventListener('click', () => closeModal('modal-create'));
     document.getElementById('modal-join-close').addEventListener('click', () => closeModal('modal-join'));
+
+    // Profile modal bindings
+    const btnOpenProfile = document.getElementById('btn-open-profile');
+    if (btnOpenProfile) btnOpenProfile.addEventListener('click', () => openModal('modal-profile'));
+
+    const btnProfileClose = document.getElementById('modal-profile-close');
+    if (btnProfileClose) btnProfileClose.addEventListener('click', () => closeModal('modal-profile'));
+
+    const modalProfile = document.getElementById('modal-profile');
+    if (modalProfile) {
+      modalProfile.addEventListener('click', (e) => {
+        if (e.target.classList.contains('modal-overlay')) closeModal('modal-profile');
+      });
+    }
+
+    const btnProfileSave = document.getElementById('btn-profile-save');
+    if (btnProfileSave) btnProfileSave.addEventListener('click', handleSaveProfile);
+
+    const profileInput = document.getElementById('profile-name-input');
+    if (profileInput) {
+      profileInput.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter') handleSaveProfile();
+      });
+    }
+
+    const btnResetSession = document.getElementById('btn-reset-session');
+    if (btnResetSession) btnResetSession.addEventListener('click', handleResetSession);
 
     // Click overlay to close modal
     document.getElementById('modal-create').addEventListener('click', (e) => {
@@ -40,6 +72,7 @@ const App = (() => {
       if (e.key === 'Escape') {
         closeModal('modal-create');
         closeModal('modal-join');
+        closeModal('modal-profile');
       }
     });
 
@@ -99,11 +132,119 @@ const App = (() => {
     DirectorsCut.init();
   }
 
+  // ─── Guest Session & Identity ─────────────────────
+
+  async function initSession() {
+    try {
+      const data = await API.getSession();
+      currentUser = data.user;
+      applyCurrentUser();
+    } catch (err) {
+      console.warn('[auth] session initialization failed, retrying:', err);
+      showToast('Your guest session was refreshed', 'info');
+      try {
+        const retry = await API.getSession();
+        currentUser = retry.user;
+        applyCurrentUser();
+      } catch (e) {
+        console.error('[auth] could not initialize session:', e);
+      }
+    }
+  }
+
+  function applyCurrentUser() {
+    if (!currentUser) return;
+    displayName = currentUser.displayName;
+    participantId = currentUser.id;
+
+    // Update profile chip on landing screen
+    const chipName = document.getElementById('profile-chip-name');
+    if (chipName) chipName.textContent = currentUser.displayName;
+
+    // Pre-fill create/join modal inputs
+    const createInput = document.getElementById('create-name');
+    if (createInput && (!createInput.value || createInput.value === '')) {
+      createInput.value = currentUser.displayName;
+    }
+
+    const joinInput = document.getElementById('join-name');
+    if (joinInput && (!joinInput.value || joinInput.value === '')) {
+      joinInput.value = currentUser.displayName;
+    }
+
+    // Update profile modal fields
+    const profileInput = document.getElementById('profile-name-input');
+    if (profileInput) profileInput.value = currentUser.displayName;
+
+    const profileUserId = document.getElementById('profile-user-id');
+    if (profileUserId) profileUserId.textContent = currentUser.id;
+  }
+
+  async function handleSaveProfile() {
+    const input = document.getElementById('profile-name-input');
+    const errorEl = document.getElementById('profile-name-error');
+    const saveBtn = document.getElementById('btn-profile-save');
+    const newName = input.value.trim();
+
+    if (newName.length < 2 || newName.length > 32) {
+      errorEl.textContent = 'Display name must be 2-32 characters';
+      errorEl.hidden = false;
+      input.classList.add('input--error');
+      return;
+    }
+    errorEl.hidden = true;
+    input.classList.remove('input--error');
+
+    saveBtn.disabled = true;
+    try {
+      const res = await API.updateProfile(newName);
+      currentUser = res.user;
+      applyCurrentUser();
+      closeModal('modal-profile');
+      showToast('Profile updated', 'success');
+    } catch (err) {
+      errorEl.textContent = err.message || 'Failed to update profile';
+      errorEl.hidden = false;
+      input.classList.add('input--error');
+    } finally {
+      saveBtn.disabled = false;
+    }
+  }
+
+  async function handleResetSession() {
+    if (!confirm('Generate a fresh guest identity? Your current session will be reset.')) return;
+    try {
+      await API.logout();
+      const res = await API.getSession();
+      currentUser = res.user;
+      applyCurrentUser();
+      closeModal('modal-profile');
+      showToast('Guest identity reset', 'info');
+    } catch (err) {
+      showToast('Failed to reset identity', 'error');
+    }
+  }
+
   // ─── Modal Management ─────────────────────────────
 
   function openModal(id) {
     const modal = document.getElementById(id);
     if (!modal) return;
+
+    // Refresh prefilled names when opening modals
+    if (id === 'modal-create' && currentUser) {
+      const input = document.getElementById('create-name');
+      if (input && !input.value) input.value = currentUser.displayName;
+    } else if (id === 'modal-join' && currentUser) {
+      const input = document.getElementById('join-name');
+      if (input && !input.value) input.value = currentUser.displayName;
+    } else if (id === 'modal-profile' && currentUser) {
+      const input = document.getElementById('profile-name-input');
+      if (input) input.value = currentUser.displayName;
+      const uid = document.getElementById('profile-user-id');
+      if (uid) uid.textContent = currentUser.id;
+    }
+
     modal.hidden = false;
     // Force reflow for transition
     modal.offsetHeight;
@@ -129,11 +270,14 @@ const App = (() => {
     const nameInput = document.getElementById('create-name');
     const nameError = document.getElementById('create-name-error');
     const submitBtn = document.getElementById('btn-create-submit');
-    const name = nameInput.value.trim();
+    let name = nameInput.value.trim();
+    if (!name && currentUser) {
+      name = currentUser.displayName;
+    }
 
     // Validate
-    if (!name || name.length < 1) {
-      nameError.textContent = 'Please enter your display name';
+    if (!name || name.length < 2) {
+      nameError.textContent = 'Please enter a display name (2-32 characters)';
       nameError.hidden = false;
       nameInput.classList.add('input--error');
       return;
@@ -176,7 +320,10 @@ const App = (() => {
     const submitBtn = document.getElementById('btn-join-submit');
 
     const code = codeInput.value.trim().toUpperCase();
-    const name = nameInput.value.trim();
+    let name = nameInput.value.trim();
+    if (!name && currentUser) {
+      name = currentUser.displayName;
+    }
 
     // Validate
     let valid = true;
@@ -190,8 +337,8 @@ const App = (() => {
       codeInput.classList.remove('input--error');
     }
 
-    if (!name || name.length < 1) {
-      nameError.textContent = 'Please enter your display name';
+    if (!name || name.length < 2) {
+      nameError.textContent = 'Please enter a display name (2-32 characters)';
       nameError.hidden = false;
       nameInput.classList.add('input--error');
       valid = false;
@@ -234,7 +381,7 @@ const App = (() => {
     document.getElementById('lobby-room-code').textContent = roomCode;
 
     // Connect WebSocket
-    WS.init(roomCode, participantId);
+    WS.init(roomCode);
 
     // Load commentary cues
     DirectorsCut.loadCues(roomCode);
@@ -247,6 +394,8 @@ const App = (() => {
     try {
       const data = await API.getRoom(roomCode);
       const room = data.room;
+      hostParticipantId = room.hostParticipantId;
+      isHost = (room.hostParticipantId === participantId);
       participants = data.participants || [];
 
       // Update screening card
@@ -283,11 +432,8 @@ const App = (() => {
   }
 
   function isParticipantHost(pid) {
-    // This is checked against room state from WS
-    return false; // Will be updated by room_state event
+    return pid === hostParticipantId;
   }
-
-  let hostParticipantId = '';
 
   // ─── Cinema ───────────────────────────────────────
 

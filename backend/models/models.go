@@ -6,6 +6,56 @@ import (
 	"go.mongodb.org/mongo-driver/v2/bson"
 )
 
+// User represents a guest or authenticated user
+type User struct {
+	ID          string    `bson:"_id" json:"id"` // UUID v4
+	DisplayName string    `bson:"displayName" json:"displayName"`
+	IsGuest     bool      `bson:"isGuest" json:"isGuest"`
+	CreatedAt   time.Time `bson:"createdAt" json:"createdAt"`
+	LastSeenAt  time.Time `bson:"lastSeenAt" json:"lastSeenAt"`
+}
+
+// Session represents an authenticated user session
+type Session struct {
+	ID         bson.ObjectID `bson:"_id,omitempty" json:"id,omitempty"`
+	TokenHash  string        `bson:"tokenHash" json:"-"`
+	UserID     string        `bson:"userId" json:"userId"`
+	CreatedAt  time.Time     `bson:"createdAt" json:"createdAt"`
+	ExpiresAt  time.Time     `bson:"expiresAt" json:"expiresAt"`
+	LastSeenAt time.Time     `bson:"lastSeenAt" json:"lastSeenAt"`
+}
+
+// SanitizedUser contains safe user fields for API responses
+type SanitizedUser struct {
+	ID          string `json:"id"`
+	DisplayName string `json:"displayName"`
+	IsGuest     bool   `json:"isGuest"`
+}
+
+// ToSanitized returns safe user fields
+func (u *User) ToSanitized() SanitizedUser {
+	return SanitizedUser{
+		ID:          u.ID,
+		DisplayName: u.DisplayName,
+		IsGuest:     u.IsGuest,
+	}
+}
+
+// AuthSessionResponse is returned by GET /api/auth/session
+type AuthSessionResponse struct {
+	User SanitizedUser `json:"user"`
+}
+
+// UpdateProfileRequest is the body for PATCH /api/auth/profile
+type UpdateProfileRequest struct {
+	DisplayName string `json:"displayName"`
+}
+
+// UpdateProfileResponse is returned by PATCH /api/auth/profile
+type UpdateProfileResponse struct {
+	User SanitizedUser `json:"user"`
+}
+
 // Room represents a watch room
 type Room struct {
 	ID                      bson.ObjectID `bson:"_id,omitempty" json:"id"`

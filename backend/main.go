@@ -19,6 +19,7 @@ import (
 
 	"spatialwatch/config"
 	"spatialwatch/handlers"
+	"spatialwatch/internal/auth"
 	"spatialwatch/repository"
 	"spatialwatch/seed"
 	ws "spatialwatch/websocket"
@@ -72,6 +73,11 @@ func main() {
 	partRepo := repository.NewParticipantRepo(db)
 	commentRepo := repository.NewCommentaryRepo(db)
 	reactionRepo := repository.NewReactionRepo(db)
+	userRepo := repository.NewUserRepo(db)
+	sessionRepo := repository.NewSessionRepo(db)
+
+	// Initialize auth service
+	authService := auth.NewAuthService(userRepo, sessionRepo, cfg)
 
 	// Seed default data
 	seed.Run(commentRepo)
@@ -80,23 +86,37 @@ func main() {
 	hub := ws.NewHub(roomRepo, partRepo, reactionRepo)
 
 	// Initialize handlers
-	handler := handlers.NewHandler(roomRepo, partRepo, commentRepo, reactionRepo, hub)
+	handler := handlers.NewHandler(roomRepo, partRepo, commentRepo, reactionRepo, hub, authService, cfg.CORSAllowedOrigins)
 
 	// Set up router
 	r := mux.NewRouter()
 
+	// Apply CORS middleware to all routes
+	r.Use(corsMiddleware(cfg.CORSAllowedOrigins))
+
 	// API routes
 	api := r.PathPrefix("/api").Subrouter()
-	api.HandleFunc("/rooms", handler.CreateRoom).Methods("POST")
-	api.HandleFunc("/rooms/join", handler.JoinRoom).Methods("POST")
-	api.HandleFunc("/rooms/{roomCode}", handler.GetRoom).Methods("GET")
-	api.HandleFunc("/rooms/{roomCode}/commentary", handler.GetCommentary).Methods("GET")
-	api.HandleFunc("/health", handler.Health).Methods("GET")
+
+	// Public auth endpoints
+	api.HandleFunc("/auth/session", handler.GetSession).Methods("GET", "OPTIONS")
+	api.HandleFunc("/auth/logout", handler.Logout).Methods("POST", "OPTIONS")
+
+	// Protected routes (require active session)
+	protected := api.PathPrefix("").Subrouter()
+	protected.Use(auth.Middleware(authService))
+	protected.HandleFunc("/auth/profile", handler.UpdateProfile).Methods("PATCH", "OPTIONS")
+	protected.HandleFunc("/rooms", handler.CreateRoom).Methods("POST", "OPTIONS")
+	protected.HandleFunc("/rooms/join", handler.JoinRoom).Methods("POST", "OPTIONS")
+
+	// Public room info and commentary
+	api.HandleFunc("/rooms/{roomCode}", handler.GetRoom).Methods("GET", "OPTIONS")
+	api.HandleFunc("/rooms/{roomCode}/commentary", handler.GetCommentary).Methods("GET", "OPTIONS")
+	api.HandleFunc("/health", handler.Health).Methods("GET", "OPTIONS")
 
 	// Health at root level too
-	r.HandleFunc("/health", handler.Health).Methods("GET")
+	r.HandleFunc("/health", handler.Health).Methods("GET", "OPTIONS")
 
-	// WebSocket
+	// WebSocket (authenticated inside handler via sw_session cookie)
 	r.HandleFunc("/ws", handler.HandleWebSocket).Methods("GET")
 
 	// Static files — serve the frontend
@@ -106,13 +126,10 @@ func main() {
 	}
 	r.PathPrefix("/").Handler(http.FileServer(http.Dir(frontendDir)))
 
-	// CORS middleware
-	corsRouter := corsMiddleware(r)
-
 	// Create server
 	srv := &http.Server{
 		Addr:         fmt.Sprintf(":%d", cfg.Port),
-		Handler:      corsRouter,
+		Handler:      r,
 		ReadTimeout:  15 * time.Second,
 		WriteTimeout: 15 * time.Second,
 		IdleTimeout:  60 * time.Second,
@@ -136,17 +153,43 @@ func main() {
 	}
 }
 
-func corsMiddleware(next http.Handler) http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Access-Control-Allow-Origin", "*")
-		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
-		w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization")
+// corsMiddleware enforces explicit origin matching for credentialed requests
+func corsMiddleware(allowedOrigins []string) mux.MiddlewareFunc {
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			origin := r.Header.Get("Origin")
+			if origin != "" {
+				allowed := false
+				for _, o := range allowedOrigins {
+					if strings.EqualFold(origin, o) {
+						allowed = true
+						break
+					}
+				}
+				// In development (when no explicit CORS origins are configured),
+				// permit localhost and 127.0.0.1 for local dual-port dev
+				if !allowed && len(allowedOrigins) == 0 {
+					if strings.HasPrefix(origin, "http://localhost:") ||
+						strings.HasPrefix(origin, "http://127.0.0.1:") ||
+						strings.HasPrefix(origin, "https://localhost:") {
+						allowed = true
+					}
+				}
 
-		if r.Method == "OPTIONS" {
-			w.WriteHeader(http.StatusOK)
-			return
-		}
+				if allowed {
+					w.Header().Set("Access-Control-Allow-Origin", origin)
+					w.Header().Set("Access-Control-Allow-Credentials", "true")
+					w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PATCH, OPTIONS")
+					w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Cookie")
+				}
+			}
 
-		next.ServeHTTP(w, r)
-	})
+			if r.Method == http.MethodOptions {
+				w.WriteHeader(http.StatusNoContent)
+				return
+			}
+
+			next.ServeHTTP(w, r)
+		})
+	}
 }

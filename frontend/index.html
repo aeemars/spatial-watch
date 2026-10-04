@@ -42,6 +42,15 @@
         <span class="landing-top-brand__title">Spatial Watch</span>
       </div>
 
+      <!-- Top-Right Guest Profile Anchor -->
+      <div class="landing-top-profile" id="landing-profile-anchor">
+        <button class="profile-chip" id="btn-open-profile" type="button" aria-haspopup="dialog" aria-label="Guest Profile">
+          <span class="profile-chip__avatar" aria-hidden="true">🎬</span>
+          <span class="profile-chip__name" id="profile-chip-name">Loading…</span>
+          <span class="chip chip--gold chip--xs profile-chip__badge">Guest</span>
+        </button>
+      </div>
+
       <!-- Ambient light effect -->
       <div class="hero-ambient" aria-hidden="true">
         <div class="hero-ambient__beam"></div>
@@ -157,6 +166,48 @@
             <span class="btn__loading" hidden>
               <span class="spinner" aria-label="Joining room"></span>
             </span>
+          </button>
+        </div>
+      </div>
+    </div>
+
+    <!-- ═══════════════════════════════════════════════ -->
+    <!-- MODAL: Guest Profile                            -->
+    <!-- ═══════════════════════════════════════════════ -->
+    <div class="modal-overlay" id="modal-profile" role="dialog" aria-labelledby="modal-profile-title" aria-modal="true" hidden>
+      <div class="modal">
+        <div class="modal__header">
+          <div class="modal__title-group">
+            <h2 class="modal__title" id="modal-profile-title">Guest Profile</h2>
+            <span class="chip chip--gold chip--xs">Guest Identity</span>
+          </div>
+          <button class="btn btn--ghost btn--icon modal__close" id="modal-profile-close" type="button" aria-label="Close">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+          </button>
+        </div>
+        <div class="modal__body">
+          <div class="form-group">
+            <label class="label" for="profile-name-input">Display Name</label>
+            <input class="input" id="profile-name-input" type="text" placeholder="Enter display name" maxlength="32" required>
+            <p class="helper-text" id="profile-name-error" hidden></p>
+          </div>
+          <div class="profile-info-card">
+            <div class="profile-info-row">
+              <span class="text--secondary">Visitor ID</span>
+              <code class="profile-info-val" id="profile-user-id">Loading…</code>
+            </div>
+            <div class="profile-info-row">
+              <span class="text--secondary">Session</span>
+              <span class="profile-info-val text--gold">30-day Secure Cookie</span>
+            </div>
+          </div>
+        </div>
+        <div class="modal__footer modal__footer--split">
+          <button class="btn btn--ghost btn--sm text--danger" id="btn-reset-session" type="button" title="Clear current session and generate a new identity">
+            Reset Identity
+          </button>
+          <button class="btn btn--primary btn--md" id="btn-profile-save" type="button">
+            Save Changes
           </button>
         </div>
       </div>

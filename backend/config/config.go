@@ -4,16 +4,21 @@ import (
 	"log"
 	"os"
 	"strconv"
+	"strings"
 
 	"github.com/joho/godotenv"
 )
 
 // Config holds all application configuration
 type Config struct {
-	Port          int
-	MongoURI      string
-	DatabaseName  string
-	PublicBaseURL string
+	Port                int
+	MongoURI            string
+	DatabaseName        string
+	PublicBaseURL       string
+	CookieSecure        bool
+	CookieDomain        string
+	CORSAllowedOrigins  []string
+	SessionDurationDays int
 }
 
 // Load reads configuration from environment variables
@@ -28,11 +33,42 @@ func Load() *Config {
 		port = 8080
 	}
 
+	sessionDuration, err := strconv.Atoi(getEnv("SESSION_DURATION_DAYS", "30"))
+	if err != nil || sessionDuration <= 0 {
+		sessionDuration = 30
+	}
+
+	cookieSecure := false
+	if val, ok := os.LookupEnv("COOKIE_SECURE"); ok {
+		cookieSecure = strings.EqualFold(val, "true") || val == "1"
+	} else {
+		// By default in dev (plain HTTP on localhost), Secure is false so cookies work locally.
+		// If PUBLIC_BASE_URL starts with https://, default to true.
+		publicURL := getEnv("PUBLIC_BASE_URL", "")
+		if strings.HasPrefix(strings.ToLower(publicURL), "https://") {
+			cookieSecure = true
+		}
+	}
+
+	var corsOrigins []string
+	if rawCORS := getEnv("CORS_ALLOWED_ORIGINS", ""); rawCORS != "" {
+		for _, o := range strings.Split(rawCORS, ",") {
+			trimmed := strings.TrimSpace(o)
+			if trimmed != "" {
+				corsOrigins = append(corsOrigins, trimmed)
+			}
+		}
+	}
+
 	return &Config{
-		Port:          port,
-		MongoURI:      getEnv("MONGODB_URI", "mongodb://localhost:27017"),
-		DatabaseName:  getEnv("DATABASE_NAME", "spatialwatch"),
-		PublicBaseURL: getEnv("PUBLIC_BASE_URL", "http://localhost:8080"),
+		Port:                port,
+		MongoURI:            getEnv("MONGODB_URI", "mongodb://localhost:27017"),
+		DatabaseName:        getEnv("DATABASE_NAME", "spatialwatch"),
+		PublicBaseURL:       getEnv("PUBLIC_BASE_URL", "http://localhost:8080"),
+		CookieSecure:        cookieSecure,
+		CookieDomain:        getEnv("COOKIE_DOMAIN", ""),
+		CORSAllowedOrigins:  corsOrigins,
+		SessionDurationDays: sessionDuration,
 	}
 }
 

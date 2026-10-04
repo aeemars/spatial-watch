@@ -143,6 +143,26 @@
   }
 }
 
+/* Top-Right Guest Profile Anchor */
+.landing-top-profile {
+  position: absolute;
+  top: calc(var(--space-5) + var(--safe-top));
+  right: calc(var(--space-6) + var(--safe-right));
+  z-index: 10;
+  display: flex;
+  align-items: center;
+}
+
+@media (max-width: 480px) {
+  .landing-top-profile {
+    top: calc(var(--space-4) + var(--safe-top));
+    right: calc(var(--space-4) + var(--safe-right));
+  }
+  .profile-chip__name {
+    max-width: 85px;
+  }
+}
+
 .hero__header {
   margin-bottom: var(--space-8);
 }
