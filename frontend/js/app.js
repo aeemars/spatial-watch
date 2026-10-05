@@ -126,9 +126,31 @@ const App = (() => {
       if (e.target.classList.contains('modal-overlay')) closeModal('modal-join');
     });
 
-    // Escape key closes modals
+    // Confirmation dialog bindings
+    const btnConfirmAction = document.getElementById('modal-confirm-btn-action');
+    if (btnConfirmAction) btnConfirmAction.addEventListener('click', () => closeConfirmDialog(true));
+
+    const btnConfirmCancel = document.getElementById('modal-confirm-btn-cancel');
+    if (btnConfirmCancel) btnConfirmCancel.addEventListener('click', () => closeConfirmDialog(false));
+
+    const btnConfirmClose = document.getElementById('modal-confirm-close');
+    if (btnConfirmClose) btnConfirmClose.addEventListener('click', () => closeConfirmDialog(false));
+
+    const modalConfirm = document.getElementById('modal-confirm');
+    if (modalConfirm) {
+      modalConfirm.addEventListener('click', (e) => {
+        if (e.target.classList.contains('modal-overlay')) closeConfirmDialog(false);
+      });
+    }
+
+    // Escape key closes modals (confirm dialog takes priority)
     document.addEventListener('keydown', (e) => {
       if (e.key === 'Escape') {
+        const confirmModal = document.getElementById('modal-confirm');
+        if (confirmModal && !confirmModal.hidden && confirmModal.classList.contains('is-visible')) {
+          closeConfirmDialog(false);
+          return;
+        }
         closeModal('modal-create');
         closeModal('modal-join');
         closeModal('modal-profile');
@@ -297,7 +319,16 @@ const App = (() => {
   }
 
   async function handleResetSession() {
-    if (!confirm('Generate a fresh guest identity? Your current session will be reset.')) return;
+    const confirmed = await showConfirmDialog({
+      title: 'Reset Guest Identity?',
+      primaryMessage: 'Generate a fresh guest identity?',
+      secondaryMessage: 'Your current session will be reset and any temporary session preferences will be cleared.',
+      confirmText: 'Reset Identity',
+      cancelText: 'Cancel',
+      isDanger: true,
+    });
+    if (!confirmed) return;
+
     try {
       await API.logout();
       const res = await API.getSession();
@@ -307,6 +338,83 @@ const App = (() => {
       showToast('Guest identity reset', 'info');
     } catch (err) {
       showToast('Failed to reset identity', 'error');
+    }
+  }
+
+  // ─── Confirmation Dialog (App-Level) ───────────────
+
+  let confirmDialogResolve = null;
+
+  function showConfirmDialog({
+    title = 'Confirm Action',
+    primaryMessage = 'Are you sure you want to proceed?',
+    secondaryMessage = '',
+    confirmText = 'Confirm',
+    cancelText = 'Cancel',
+    isDanger = true,
+  } = {}) {
+    return new Promise((resolve) => {
+      if (confirmDialogResolve) {
+        confirmDialogResolve(false);
+        confirmDialogResolve = null;
+      }
+      confirmDialogResolve = resolve;
+
+      const modal = document.getElementById('modal-confirm');
+      if (!modal) {
+        resolve(false);
+        return;
+      }
+
+      const modalContainer = modal.querySelector('.modal--confirm');
+      const titleEl = document.getElementById('modal-confirm-title');
+      const primaryEl = document.getElementById('modal-confirm-primary');
+      const secondaryEl = document.getElementById('modal-confirm-secondary');
+      const btnAction = document.getElementById('modal-confirm-btn-action');
+      const btnCancel = document.getElementById('modal-confirm-btn-cancel');
+
+      if (titleEl) titleEl.textContent = title;
+      if (primaryEl) primaryEl.textContent = primaryMessage;
+      if (secondaryEl) {
+        secondaryEl.textContent = secondaryMessage;
+        secondaryEl.hidden = !secondaryMessage;
+      }
+
+      if (btnCancel) btnCancel.textContent = cancelText;
+
+      if (btnAction) {
+        btnAction.textContent = confirmText;
+        if (isDanger) {
+          btnAction.className = 'btn btn--danger-solid btn--md';
+          if (modalContainer) modalContainer.classList.remove('modal--confirm-neutral');
+        } else {
+          btnAction.className = 'btn btn--primary btn--md';
+          if (modalContainer) modalContainer.classList.add('modal--confirm-neutral');
+        }
+      }
+
+      modal.hidden = false;
+      modal.offsetHeight; // Force reflow for animation
+      modal.classList.add('is-visible');
+
+      if (btnAction) {
+        setTimeout(() => btnAction.focus(), 80);
+      }
+    });
+  }
+
+  function closeConfirmDialog(result = false) {
+    const modal = document.getElementById('modal-confirm');
+    if (modal && !modal.hidden) {
+      modal.classList.remove('is-visible');
+      setTimeout(() => {
+        modal.hidden = true;
+      }, 300);
+    }
+    if (confirmDialogResolve) {
+      const res = confirmDialogResolve;
+      confirmDialogResolve = null;
+      res(result);
     }
   }
 
@@ -1442,7 +1550,15 @@ const App = (() => {
 
   async function handleShutdownRoom(code, name) {
     const displayName = name || code;
-    if (!confirm(`Are you sure you want to shut down "${displayName}"?\n\nThis will permanently close the screening and disconnect all participants.`)) {
+    const confirmed = await showConfirmDialog({
+      title: 'Shut Down Room?',
+      primaryMessage: `Are you sure you want to shut down "${displayName}"?`,
+      secondaryMessage: 'This will permanently close the screening and disconnect all participants.',
+      confirmText: 'Shut Down Room',
+      cancelText: 'Cancel',
+      isDanger: true,
+    });
+    if (!confirmed) {
       return;
     }
 
@@ -1469,7 +1585,15 @@ const App = (() => {
 
   async function handleLeaveJoinedRoom(code, name) {
     const displayName = name || code;
-    if (!confirm(`Leave "${displayName}"?\n\nThis room will be removed from your continued access list.`)) {
+    const confirmed = await showConfirmDialog({
+      title: 'Leave Room?',
+      primaryMessage: `Leave "${displayName}"?`,
+      secondaryMessage: 'This room will be removed from your continued access list.',
+      confirmText: 'Leave Room',
+      cancelText: 'Cancel',
+      isDanger: true,
+    });
+    if (!confirmed) {
       return;
     }
 
@@ -1568,6 +1692,8 @@ const App = (() => {
     openRecordsModal,
     updateRecordsBadge,
     handleShutdownCurrentRoom,
+    showConfirmDialog,
+    closeConfirmDialog,
   };
 })();
 

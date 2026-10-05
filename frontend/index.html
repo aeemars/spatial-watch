@@ -347,6 +347,39 @@
     </div>
 
     <!-- ═══════════════════════════════════════════════ -->
+    <!-- MODAL: Confirmation Dialog (App-level)          -->
+    <!-- ═══════════════════════════════════════════════ -->
+    <div class="modal-overlay modal-overlay--confirm" id="modal-confirm" role="dialog" aria-labelledby="modal-confirm-title" aria-describedby="modal-confirm-primary" aria-modal="true" hidden>
+      <div class="modal modal--confirm">
+        <div class="modal__header">
+          <div class="modal__title-group">
+            <div class="modal__confirm-icon-wrap" id="modal-confirm-icon-wrap" aria-hidden="true">
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/>
+                <line x1="12" y1="9" x2="12" y2="13"/>
+                <line x1="12" y1="17" x2="12.01" y2="17"/>
+              </svg>
+            </div>
+            <h2 class="modal__title" id="modal-confirm-title">Shut Down Room?</h2>
+          </div>
+          <button class="btn btn--ghost btn--icon modal__close" id="modal-confirm-close" type="button" aria-label="Close">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+          </button>
+        </div>
+
+        <div class="modal__body modal__body--confirm">
+          <p class="modal__confirm-primary" id="modal-confirm-primary"></p>
+          <p class="modal__confirm-secondary" id="modal-confirm-secondary"></p>
+        </div>
+
+        <div class="modal__footer modal__footer--confirm">
+          <button class="btn btn--secondary btn--md" id="modal-confirm-btn-cancel" type="button">Cancel</button>
+          <button class="btn btn--danger-solid btn--md" id="modal-confirm-btn-action" type="button">Shut Down Room</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- ═══════════════════════════════════════════════ -->
     <!-- SCREEN 2: Room Lobby                            -->
     <!-- ═══════════════════════════════════════════════ -->
     <section class="screen screen--lobby" id="screen-lobby" aria-label="Room Lobby" hidden>
