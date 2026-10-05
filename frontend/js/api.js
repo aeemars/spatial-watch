@@ -62,9 +62,23 @@ const API = (() => {
       return request('POST', '/api/auth/logout');
     },
 
+    /** Get curated demo films catalog */
+    getMediaAssets() {
+      return request('GET', '/api/media-assets');
+    },
+
     /** Create a new room (host bound to authenticated session) */
-    createRoom(roomName, displayName, mediaUrl) {
-      return request('POST', '/api/rooms', { roomName, displayName, mediaUrl });
+    createRoom(roomName, displayName, options = {}) {
+      const payload = { roomName, displayName };
+      if (typeof options === 'string') {
+        // Backwards compatibility if old callers pass mediaUrl as 3rd arg
+        payload.mediaUrl = options;
+      } else if (options && typeof options === 'object') {
+        if (options.mediaAssetId) payload.mediaAssetId = options.mediaAssetId;
+        if (options.mediaUrl) payload.mediaUrl = options.mediaUrl;
+        if (options.mediaTitle) payload.mediaTitle = options.mediaTitle;
+      }
+      return request('POST', '/api/rooms', payload);
     },
 
     /** Join an existing room (participant bound to authenticated session) */

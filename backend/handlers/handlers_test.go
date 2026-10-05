@@ -35,6 +35,7 @@ func setupTestRig() *testRig {
 	reactionRepo := repository.NewReactionRepo(nil)
 	userRepo := repository.NewUserRepo(nil)
 	sessionRepo := repository.NewSessionRepo(nil)
+	mediaRepo := repository.NewMediaAssetRepo(nil)
 
 	cfg := &config.Config{
 		CookieSecure:        false,
@@ -42,9 +43,9 @@ func setupTestRig() *testRig {
 	}
 
 	authService := auth.NewAuthService(userRepo, sessionRepo, cfg)
-	seed.Run(commentRepo)
+	seed.Run(commentRepo, mediaRepo)
 	hub := ws.NewHub(roomRepo, partRepo, reactionRepo)
-	h := handlers.NewHandler(roomRepo, partRepo, commentRepo, reactionRepo, hub, authService, nil)
+	h := handlers.NewHandler(roomRepo, partRepo, commentRepo, reactionRepo, hub, authService, mediaRepo, nil)
 
 	r := mux.NewRouter()
 	api := r.PathPrefix("/api").Subrouter()
@@ -52,6 +53,9 @@ func setupTestRig() *testRig {
 	// Public Auth endpoints
 	api.HandleFunc("/auth/session", h.GetSession).Methods("GET")
 	api.HandleFunc("/auth/logout", h.Logout).Methods("POST")
+
+	// Media Catalog
+	api.HandleFunc("/media-assets", h.GetMediaAssets).Methods("GET")
 
 	// Protected routes (enforced by auth middleware)
 	protected := api.PathPrefix("").Subrouter()
@@ -614,5 +618,295 @@ func TestHostShutdownRoom(t *testing.T) {
 	json.Unmarshal(rrGuestRec.Body.Bytes(), &guestRec)
 	if len(guestRec.JoinedRooms) != 0 {
 		t.Fatalf("Expected 0 joined rooms for guest after room shutdown, got %d", len(guestRec.JoinedRooms))
+	}
+}
+
+func TestGetMediaAssetsCatalog(t *testing.T) {
+	rig := setupTestRig()
+
+	req, _ := http.NewRequest("GET", "/api/media-assets", nil)
+	rr := httptest.NewRecorder()
+	rig.Router.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("Expected 200 OK from GET /api/media-assets, got %d", rr.Code)
+	}
+
+	var assets []models.MediaAsset
+	if err := json.Unmarshal(rr.Body.Bytes(), &assets); err != nil {
+		t.Fatalf("Failed to decode media assets: %v", err)
+	}
+
+	if len(assets) < 4 {
+		t.Fatalf("Expected at least 4 catalog assets seeded, got %d", len(assets))
+	}
+
+	foundBBB := false
+	for _, a := range assets {
+		if a.AssetID == "big-buck-bunny" {
+			foundBBB = true
+			if !strings.HasPrefix(a.MediaURL, "https://") || !strings.HasSuffix(a.MediaURL, ".mp4") {
+				t.Fatalf("Big Buck Bunny URL must be HTTPS MP4, got %s", a.MediaURL)
+			}
+			if !a.CORSReady {
+				t.Fatalf("Expected Big Buck Bunny to have CORSReady = true")
+			}
+			if !a.DirectorCutAvailable {
+				t.Fatalf("Expected Big Buck Bunny to have DirectorCutAvailable = true")
+			}
+		}
+	}
+	if !foundBBB {
+		t.Fatalf("Seeded catalog must contain big-buck-bunny")
+	}
+}
+
+func TestCreateRoom_DefaultMedia(t *testing.T) {
+	rig := setupTestRig()
+	_, cookie := createTestGuestSession(t, rig)
+
+	body, _ := json.Marshal(models.CreateRoomRequest{
+		RoomName: "Default Media Room",
+	})
+	req, _ := http.NewRequest("POST", "/api/rooms", bytes.NewBuffer(body))
+	req.Header.Set("Content-Type", "application/json")
+	req.AddCookie(cookie)
+	rr := httptest.NewRecorder()
+	rig.Router.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusCreated {
+		t.Fatalf("Expected 201 Created, got %d: %s", rr.Code, rr.Body.String())
+	}
+
+	var resp models.CreateRoomResponse
+	json.Unmarshal(rr.Body.Bytes(), &resp)
+
+	if resp.MediaSourceType != "catalog" {
+		t.Fatalf("Expected mediaSourceType 'catalog', got %q", resp.MediaSourceType)
+	}
+	if resp.MediaAssetID != "big-buck-bunny" {
+		t.Fatalf("Expected default mediaAssetId 'big-buck-bunny', got %q", resp.MediaAssetID)
+	}
+	if resp.MediaTitle != "Big Buck Bunny" {
+		t.Fatalf("Expected default mediaTitle 'Big Buck Bunny', got %q", resp.MediaTitle)
+	}
+	if resp.DurationSeconds <= 0 {
+		t.Fatalf("Expected positive durationSeconds for default media, got %f", resp.DurationSeconds)
+	}
+}
+
+func TestCreateRoom_CatalogSelection(t *testing.T) {
+	rig := setupTestRig()
+	_, cookie := createTestGuestSession(t, rig)
+
+	body, _ := json.Marshal(models.CreateRoomRequest{
+		RoomName:     "Tears of Steel Cinema",
+		MediaAssetID: "tears-of-steel",
+	})
+	req, _ := http.NewRequest("POST", "/api/rooms", bytes.NewBuffer(body))
+	req.Header.Set("Content-Type", "application/json")
+	req.AddCookie(cookie)
+	rr := httptest.NewRecorder()
+	rig.Router.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusCreated {
+		t.Fatalf("Expected 201 Created, got %d: %s", rr.Code, rr.Body.String())
+	}
+
+	var resp models.CreateRoomResponse
+	json.Unmarshal(rr.Body.Bytes(), &resp)
+
+	if resp.MediaSourceType != "catalog" {
+		t.Fatalf("Expected mediaSourceType 'catalog', got %q", resp.MediaSourceType)
+	}
+	if resp.MediaAssetID != "tears-of-steel" {
+		t.Fatalf("Expected mediaAssetId 'tears-of-steel', got %q", resp.MediaAssetID)
+	}
+	if resp.MediaTitle != "Tears of Steel" {
+		t.Fatalf("Expected mediaTitle 'Tears of Steel', got %q", resp.MediaTitle)
+	}
+	if resp.DurationSeconds != 734 {
+		t.Fatalf("Expected duration 734s, got %f", resp.DurationSeconds)
+	}
+}
+
+func TestCreateRoom_UnknownCatalogAsset(t *testing.T) {
+	rig := setupTestRig()
+	_, cookie := createTestGuestSession(t, rig)
+
+	body, _ := json.Marshal(models.CreateRoomRequest{
+		RoomName:     "Non-existent Film Room",
+		MediaAssetID: "non-existent-film",
+	})
+	req, _ := http.NewRequest("POST", "/api/rooms", bytes.NewBuffer(body))
+	req.Header.Set("Content-Type", "application/json")
+	req.AddCookie(cookie)
+	rr := httptest.NewRecorder()
+	rig.Router.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusBadRequest {
+		t.Fatalf("Expected 400 Bad Request for unknown mediaAssetId, got %d", rr.Code)
+	}
+}
+
+func TestCreateRoom_CustomHostedMP4(t *testing.T) {
+	rig := setupTestRig()
+	_, cookie := createTestGuestSession(t, rig)
+
+	body, _ := json.Marshal(models.CreateRoomRequest{
+		RoomName:   "Indie Screening",
+		MediaURL:   "https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/Sintel.mp4",
+		MediaTitle: "Sintel (Indie Premiere)",
+	})
+	req, _ := http.NewRequest("POST", "/api/rooms", bytes.NewBuffer(body))
+	req.Header.Set("Content-Type", "application/json")
+	req.AddCookie(cookie)
+	rr := httptest.NewRecorder()
+	rig.Router.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusCreated {
+		t.Fatalf("Expected 201 Created for valid custom MP4, got %d: %s", rr.Code, rr.Body.String())
+	}
+
+	var resp models.CreateRoomResponse
+	json.Unmarshal(rr.Body.Bytes(), &resp)
+
+	if resp.MediaSourceType != "custom" {
+		t.Fatalf("Expected mediaSourceType 'custom', got %q", resp.MediaSourceType)
+	}
+	if resp.MediaTitle != "Sintel (Indie Premiere)" {
+		t.Fatalf("Expected custom title to be preserved, got %q", resp.MediaTitle)
+	}
+	if resp.MediaURL != "https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/Sintel.mp4" {
+		t.Fatalf("Expected custom URL to be preserved, got %q", resp.MediaURL)
+	}
+}
+
+func TestCreateRoom_InvalidCustomMedia(t *testing.T) {
+	rig := setupTestRig()
+	_, cookie := createTestGuestSession(t, rig)
+
+	tests := []struct {
+		name       string
+		url        string
+		title      string
+		expectCode int
+	}{
+		{
+			name:       "Insecure HTTP URL",
+			url:        "http://commondatastorage.googleapis.com/video.mp4",
+			title:      "Insecure Video",
+			expectCode: http.StatusBadRequest,
+		},
+		{
+			name:       "Non-MP4 URL",
+			url:        "https://commondatastorage.googleapis.com/video.mkv",
+			title:      "MKV Video",
+			expectCode: http.StatusBadRequest,
+		},
+		{
+			name:       "Missing title with URL",
+			url:        "https://commondatastorage.googleapis.com/video.mp4",
+			title:      "",
+			expectCode: http.StatusBadRequest,
+		},
+		{
+			name:       "Missing URL with title",
+			url:        "",
+			title:      "Custom Video",
+			expectCode: http.StatusBadRequest,
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			body, _ := json.Marshal(models.CreateRoomRequest{
+				RoomName:   "Test Room",
+				MediaURL:   tc.url,
+				MediaTitle: tc.title,
+			})
+			req, _ := http.NewRequest("POST", "/api/rooms", bytes.NewBuffer(body))
+			req.Header.Set("Content-Type", "application/json")
+			req.AddCookie(cookie)
+			rr := httptest.NewRecorder()
+			rig.Router.ServeHTTP(rr, req)
+
+			if rr.Code != tc.expectCode {
+				t.Fatalf("[%s] Expected status %d, got %d: %s", tc.name, tc.expectCode, rr.Code, rr.Body.String())
+			}
+		})
+	}
+}
+
+func TestCreateRoom_MutuallyExclusiveMedia(t *testing.T) {
+	rig := setupTestRig()
+	_, cookie := createTestGuestSession(t, rig)
+
+	body, _ := json.Marshal(models.CreateRoomRequest{
+		RoomName:     "Conflict Room",
+		MediaAssetID: "big-buck-bunny",
+		MediaURL:     "https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/Sintel.mp4",
+		MediaTitle:   "Sintel",
+	})
+	req, _ := http.NewRequest("POST", "/api/rooms", bytes.NewBuffer(body))
+	req.Header.Set("Content-Type", "application/json")
+	req.AddCookie(cookie)
+	rr := httptest.NewRecorder()
+	rig.Router.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusBadRequest {
+		t.Fatalf("Expected 400 Bad Request when specifying both mediaAssetId and mediaUrl, got %d", rr.Code)
+	}
+}
+
+func TestGetUserRooms_IncludesMediaSnapshot(t *testing.T) {
+	rig := setupTestRig()
+	_, cookie := createTestGuestSession(t, rig)
+
+	body, _ := json.Marshal(models.CreateRoomRequest{
+		RoomName:     "Catalog Screening Room",
+		MediaAssetID: "sintel",
+	})
+	req, _ := http.NewRequest("POST", "/api/rooms", bytes.NewBuffer(body))
+	req.Header.Set("Content-Type", "application/json")
+	req.AddCookie(cookie)
+	rr := httptest.NewRecorder()
+	rig.Router.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusCreated {
+		t.Fatalf("Expected 201 Created, got %d: %s", rr.Code, rr.Body.String())
+	}
+
+	// Fetch user rooms
+	reqRooms, _ := http.NewRequest("GET", "/api/user/rooms", nil)
+	reqRooms.AddCookie(cookie)
+	rrRooms := httptest.NewRecorder()
+	rig.Router.ServeHTTP(rrRooms, reqRooms)
+
+	if rrRooms.Code != http.StatusOK {
+		t.Fatalf("Expected 200 OK from GET /api/user/rooms, got %d", rrRooms.Code)
+	}
+
+	var userRooms models.UserRoomsResponse
+	if err := json.Unmarshal(rrRooms.Body.Bytes(), &userRooms); err != nil {
+		t.Fatalf("Failed to parse user rooms: %v", err)
+	}
+
+	if len(userRooms.CreatedRooms) != 1 {
+		t.Fatalf("Expected 1 created room, got %d", len(userRooms.CreatedRooms))
+	}
+
+	record := userRooms.CreatedRooms[0]
+	if record.MediaTitle != "Sintel" {
+		t.Fatalf("Expected mediaTitle 'Sintel', got %q", record.MediaTitle)
+	}
+	if record.MediaSourceType != "catalog" {
+		t.Fatalf("Expected mediaSourceType 'catalog', got %q", record.MediaSourceType)
+	}
+	if record.MediaAssetID != "sintel" {
+		t.Fatalf("Expected mediaAssetId 'sintel', got %q", record.MediaAssetID)
+	}
+	if record.DurationSeconds != 888 {
+		t.Fatalf("Expected duration 888s, got %f", record.DurationSeconds)
 	}
 }

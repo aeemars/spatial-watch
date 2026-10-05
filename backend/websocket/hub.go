@@ -234,10 +234,20 @@ func (h *Hub) handleRequestSync(client *Client) {
 
 	participants, _ := h.partRepo.FindByRoom(ctx, client.RoomCode)
 
+	mediaTitle := models.FormatMediaTitle(room.MediaTitle, room.MediaURL)
+	sourceType := room.MediaSourceType
+	if sourceType == "" {
+		sourceType = "catalog"
+	}
+
 	syncPayload := models.RoomStatePayload{
 		RoomCode:           room.RoomCode,
 		Name:               room.Name,
+		MediaSourceType:    sourceType,
+		MediaAssetID:       room.MediaAssetID,
+		MediaTitle:         mediaTitle,
 		MediaURL:           room.MediaURL,
+		DurationSeconds:    room.DurationSeconds,
 		IsPaused:           room.IsPaused,
 		Position:           room.PlaybackPositionSeconds,
 		DirectorCutEnabled: room.DirectorCutEnabled,

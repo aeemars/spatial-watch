@@ -17,6 +17,11 @@ const App = (() => {
   let currentUser = null;
   let hostParticipantId = '';
 
+  // Media Catalog Selection State
+  let catalogAssets = [];
+  let selectedAssetId = 'big-buck-bunny';
+  let activeMediaSource = 'catalog'; // 'catalog' | 'custom'
+
   // ─── Initialization ───────────────────────────────
   function init() {
     // Check WebXR support
@@ -32,6 +37,16 @@ const App = (() => {
         goHome();
       });
     });
+
+    // Media source tabs in create room modal
+    const tabCatalog = document.getElementById('tab-media-catalog');
+    if (tabCatalog) tabCatalog.addEventListener('click', () => switchMediaSourceTab('catalog'));
+
+    const tabCustom = document.getElementById('tab-media-custom');
+    if (tabCustom) tabCustom.addEventListener('click', () => switchMediaSourceTab('custom'));
+
+    // Preload media catalog
+    loadMediaCatalog();
 
     // Bind landing buttons
     document.getElementById('btn-create-room').addEventListener('click', () => openModal('modal-create'));
@@ -321,6 +336,18 @@ const App = (() => {
       const nameErr = document.getElementById('create-name-error');
       if (nameErr) nameErr.hidden = true;
       if (input) input.classList.remove('input--error');
+
+      // Clear custom media errors
+      const cTitleErr = document.getElementById('create-custom-title-error');
+      if (cTitleErr) cTitleErr.hidden = true;
+      const cUrlErr = document.getElementById('create-custom-url-error');
+      if (cUrlErr) cUrlErr.hidden = true;
+
+      // Ensure catalog is populated
+      if (catalogAssets.length === 0) {
+        loadMediaCatalog();
+      }
+      switchMediaSourceTab(activeMediaSource || 'catalog');
     } else if (id === 'modal-join') {
       const input = document.getElementById('join-name');
       if (input && currentUser && currentUser.displayName) {
@@ -368,6 +395,119 @@ const App = (() => {
     setTimeout(() => {
       modal.hidden = true;
     }, 300);
+  }
+
+  // ─── Media Catalog & Source Tabs ──────────────────
+
+  function switchMediaSourceTab(source) {
+    activeMediaSource = source;
+    const tabCat = document.getElementById('tab-media-catalog');
+    const tabCust = document.getElementById('tab-media-custom');
+    const paneCat = document.getElementById('pane-media-catalog');
+    const paneCust = document.getElementById('pane-media-custom');
+
+    if (source === 'catalog') {
+      if (tabCat) {
+        tabCat.classList.add('is-active');
+        tabCat.setAttribute('aria-selected', 'true');
+      }
+      if (tabCust) {
+        tabCust.classList.remove('is-active');
+        tabCust.setAttribute('aria-selected', 'false');
+      }
+      if (paneCat) paneCat.classList.remove('is-hidden');
+      if (paneCust) paneCust.classList.add('is-hidden');
+    } else {
+      if (tabCust) {
+        tabCust.classList.add('is-active');
+        tabCust.setAttribute('aria-selected', 'true');
+      }
+      if (tabCat) {
+        tabCat.classList.remove('is-active');
+        tabCat.setAttribute('aria-selected', 'false');
+      }
+      if (paneCust) paneCust.classList.remove('is-hidden');
+      if (paneCat) paneCat.classList.add('is-hidden');
+      const titleInput = document.getElementById('create-custom-title');
+      if (titleInput) setTimeout(() => titleInput.focus(), 100);
+    }
+  }
+
+  async function loadMediaCatalog() {
+    try {
+      const assets = await API.getMediaAssets();
+      if (Array.isArray(assets) && assets.length > 0) {
+        catalogAssets = assets;
+        renderCatalogCards(assets);
+      }
+    } catch (e) {
+      console.warn('[app] failed to load media catalog:', e);
+      const listEl = document.getElementById('catalog-card-list');
+      if (listEl) {
+        listEl.innerHTML = `
+          <div class="catalog-loading">
+            <span>Unable to load catalog. You can still use a custom hosted MP4 URL.</span>
+          </div>
+        `;
+      }
+    }
+  }
+
+  function renderCatalogCards(assets) {
+    const listEl = document.getElementById('catalog-card-list');
+    if (!listEl) return;
+
+    listEl.innerHTML = '';
+    assets.forEach((asset, idx) => {
+      const isSelected = (selectedAssetId === asset.assetId) || (!selectedAssetId && idx === 0);
+      if (isSelected && !selectedAssetId) selectedAssetId = asset.assetId;
+
+      const card = document.createElement('div');
+      card.className = 'catalog-card' + (isSelected ? ' is-selected' : '');
+      card.setAttribute('role', 'radio');
+      card.setAttribute('aria-checked', isSelected ? 'true' : 'false');
+      card.setAttribute('tabindex', '0');
+      card.dataset.assetId = asset.assetId;
+
+      const gradient = asset.gradient || 'linear-gradient(135deg, #1c2331, #0e111a)';
+      const durStr = formatTime(asset.durationSeconds);
+
+      card.innerHTML = `
+        <div class="catalog-card__thumb" style="background: ${gradient}">
+          <span class="catalog-card__duration">${durStr}</span>
+          ${asset.directorCutAvailable ? '<span class="catalog-card__dc-badge">DC</span>' : ''}
+          <div class="catalog-card__check">
+            <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>
+          </div>
+        </div>
+        <div class="catalog-card__body">
+          <div class="catalog-card__title">${escapeHtml(asset.title)}</div>
+          <div class="catalog-card__desc">${escapeHtml(asset.description || '')}</div>
+        </div>
+      `;
+
+      card.addEventListener('click', () => {
+        selectCatalogAsset(asset.assetId);
+      });
+      card.addEventListener('keydown', (e) => {
+        if (e.key === ' ' || e.key === 'Enter') {
+          e.preventDefault();
+          selectCatalogAsset(asset.assetId);
+        }
+      });
+
+      listEl.appendChild(card);
+    });
+  }
+
+  function selectCatalogAsset(assetId) {
+    selectedAssetId = assetId;
+    const cards = document.querySelectorAll('.catalog-card');
+    cards.forEach((c) => {
+      const match = c.dataset.assetId === assetId;
+      c.classList.toggle('is-selected', match);
+      c.setAttribute('aria-checked', match ? 'true' : 'false');
+    });
   }
 
   // ─── Room Creation ────────────────────────────────
@@ -427,8 +567,52 @@ const App = (() => {
       return;
     }
 
+    // Resolve media options
+    const options = {};
+    if (activeMediaSource === 'catalog') {
+      options.mediaAssetId = selectedAssetId || 'big-buck-bunny';
+    } else {
+      const customTitleInput = document.getElementById('create-custom-title');
+      const customUrlInput = document.getElementById('create-custom-url');
+      const customTitleErr = document.getElementById('create-custom-title-error');
+      const customUrlErr = document.getElementById('create-custom-url-error');
+
+      if (customTitleErr) customTitleErr.hidden = true;
+      if (customUrlErr) customUrlErr.hidden = true;
+      if (customTitleInput) customTitleInput.classList.remove('input--error');
+      if (customUrlInput) customUrlInput.classList.remove('input--error');
+
+      const cTitle = customTitleInput ? customTitleInput.value.trim() : '';
+      const cUrl = customUrlInput ? customUrlInput.value.trim() : '';
+
+      if (!cTitle || cTitle.length < 2 || cTitle.length > 100 || /[<>]/.test(cTitle)) {
+        if (customTitleErr) {
+          customTitleErr.textContent = 'Please enter a title for this video (2-100 characters)';
+          customTitleErr.hidden = false;
+        }
+        if (customTitleInput) customTitleInput.classList.add('input--error');
+        submitBtn.classList.remove('btn--loading');
+        submitBtn.disabled = false;
+        return;
+      }
+
+      if (!cUrl || !cUrl.startsWith('https://') || !cUrl.toLowerCase().includes('.mp4')) {
+        if (customUrlErr) {
+          customUrlErr.textContent = 'Custom source must be a secure direct HTTPS URL pointing to an .mp4 file';
+          customUrlErr.hidden = false;
+        }
+        if (customUrlInput) customUrlInput.classList.add('input--error');
+        submitBtn.classList.remove('btn--loading');
+        submitBtn.disabled = false;
+        return;
+      }
+
+      options.mediaUrl = cUrl;
+      options.mediaTitle = cTitle;
+    }
+
     try {
-      const data = await API.createRoom(rName, name);
+      const data = await API.createRoom(rName, name, options);
       roomCode = data.roomCode;
       roomName = data.name || rName;
       participantId = data.participantId;
@@ -585,8 +769,46 @@ const App = (() => {
       if (btnShutdown) btnShutdown.hidden = !isHost;
 
       // Update screening card
-      document.getElementById('lobby-media-title').textContent = extractMediaTitle(room.mediaUrl);
+      const mediaTitle = room.mediaTitle || extractMediaTitle(room.mediaUrl);
+      const mediaTitleEl = document.getElementById('lobby-media-title');
+      if (mediaTitleEl) mediaTitleEl.textContent = mediaTitle;
+
+      const sourceBadge = document.getElementById('lobby-source-badge');
+      if (sourceBadge) {
+        if (room.mediaSourceType === 'custom') {
+          sourceBadge.textContent = 'Custom MP4';
+          sourceBadge.className = 'badge badge--source badge--source-custom';
+        } else {
+          sourceBadge.textContent = 'Curated Film';
+          sourceBadge.className = 'badge badge--source';
+        }
+      }
+
+      const mediaMetaEl = document.getElementById('lobby-media-meta');
+      if (mediaMetaEl) {
+        const sourceType = room.mediaSourceType === 'custom' ? 'Custom Hosted MP4' : 'Curated Short Film';
+        const durStr = room.durationSeconds ? formatTime(room.durationSeconds) : '';
+        mediaMetaEl.textContent = durStr ? `${sourceType} · ${durStr}` : sourceType;
+      }
+
       document.getElementById('lobby-dc-badge').hidden = !room.directorCutEnabled;
+
+      // Preload media metadata for VR screen initialization and preflight check
+      if (room.mediaUrl) {
+        Cinema.preloadMedia(
+          room.mediaUrl,
+          () => {
+            if (window.XR && typeof XR.setMediaReady === 'function') {
+              XR.setMediaReady(true, { duration: room.durationSeconds });
+            }
+          },
+          () => {
+            if (window.XR && typeof XR.setMediaReady === 'function') {
+              XR.setMediaReady(false);
+            }
+          }
+        );
+      }
 
       // Update participant list
       updateParticipantList(participants);
@@ -632,13 +854,23 @@ const App = (() => {
       hostParticipantId = room.hostParticipantId;
       isHost = room.hostParticipantId === participantId;
 
-      Cinema.init(room.mediaUrl, isHost);
+      Cinema.init(room.mediaUrl, isHost, () => {
+        // Direct Quest entry: if user clicked "Enter VR Cinema", trigger WebXR
+        if (XR.isSupported() && !XR.isInVR()) {
+          XR.enterVR();
+        }
+      });
 
       // Update cinema UI
       document.getElementById('cinema-room-code').textContent = roomCode;
       const cinemaNameEl = document.getElementById('cinema-room-name');
       if (cinemaNameEl) cinemaNameEl.textContent = room.name || roomName;
       document.getElementById('cinema-participant-badge').textContent = (data.participants || []).length;
+
+      // Direct Quest entry: if WebXR supported, request session immediately on click
+      if (XR.isSupported() && !XR.isInVR()) {
+        XR.enterVR();
+      }
 
       // Sync playback state
       if (!room.isPaused) {

@@ -20,13 +20,14 @@ import (
 
 // Handler holds all HTTP and WebSocket handler dependencies
 type Handler struct {
-	RoomRepo     *repository.RoomRepo
-	PartRepo     *repository.ParticipantRepo
-	CommentRepo  *repository.CommentaryRepo
-	ReactionRepo *repository.ReactionRepo
-	Hub          *ws.Hub
-	AuthService  *auth.AuthService
-	upgrader     gorillaWs.Upgrader
+	RoomRepo       *repository.RoomRepo
+	PartRepo       *repository.ParticipantRepo
+	CommentRepo    *repository.CommentaryRepo
+	ReactionRepo   *repository.ReactionRepo
+	Hub            *ws.Hub
+	AuthService    *auth.AuthService
+	MediaAssetRepo *repository.MediaAssetRepo
+	upgrader       gorillaWs.Upgrader
 }
 
 // NewHandler creates a new handler with all dependencies
@@ -37,15 +38,17 @@ func NewHandler(
 	reactionRepo *repository.ReactionRepo,
 	hub *ws.Hub,
 	authService *auth.AuthService,
+	mediaAssetRepo *repository.MediaAssetRepo,
 	corsOrigins []string,
 ) *Handler {
 	return &Handler{
-		RoomRepo:     roomRepo,
-		PartRepo:     partRepo,
-		CommentRepo:  commentRepo,
-		ReactionRepo: reactionRepo,
-		Hub:          hub,
-		AuthService:  authService,
+		RoomRepo:       roomRepo,
+		PartRepo:       partRepo,
+		CommentRepo:    commentRepo,
+		ReactionRepo:   reactionRepo,
+		Hub:            hub,
+		AuthService:    authService,
+		MediaAssetRepo: mediaAssetRepo,
 		upgrader: gorillaWs.Upgrader{
 			ReadBufferSize:  1024,
 			WriteBufferSize: 1024,
@@ -60,6 +63,28 @@ func (h *Handler) Health(w http.ResponseWriter, r *http.Request) {
 		"status": "ok",
 		"time":   time.Now().UTC().Format(time.RFC3339),
 	})
+}
+
+// GetMediaAssets handles GET /api/media-assets
+// Returns the list of curated short films in the catalog
+func (h *Handler) GetMediaAssets(w http.ResponseWriter, r *http.Request) {
+	if h.MediaAssetRepo == nil {
+		respondJSON(w, http.StatusOK, []models.MediaAsset{})
+		return
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
+	defer cancel()
+
+	assets, err := h.MediaAssetRepo.FindAll(ctx)
+	if err != nil {
+		log.Printf("[api] failed to fetch media assets: %v", err)
+		respondError(w, http.StatusInternalServerError, "Failed to fetch media assets")
+		return
+	}
+	if assets == nil {
+		assets = []models.MediaAsset{}
+	}
+	respondJSON(w, http.StatusOK, assets)
 }
 
 // ─── Authentication Endpoints ────────────────────────────────────
@@ -195,9 +220,70 @@ func (h *Handler) CreateRoom(w http.ResponseWriter, r *http.Request) {
 	// Host ID is always the authenticated session user ID
 	participantID := authUser.ID
 
-	mediaURL := req.MediaURL
-	if mediaURL == "" {
-		mediaURL = "https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/BigBuckBunny.mp4"
+	// Resolve media source: catalog or custom hosted MP4
+	mediaAssetID := strings.TrimSpace(req.MediaAssetID)
+	customURL := strings.TrimSpace(req.MediaURL)
+	customTitle := strings.TrimSpace(req.MediaTitle)
+
+	var (
+		mediaSourceType    string
+		resolvedAssetID    string
+		resolvedMediaURL   string
+		resolvedMediaTitle string
+		resolvedDuration   float64
+	)
+
+	// Mutually exclusive: cannot specify both catalog asset and custom URL/title
+	if mediaAssetID != "" && (customURL != "" || customTitle != "") {
+		respondError(w, http.StatusBadRequest, "Choose either a catalog media asset or a custom hosted MP4, not both")
+		return
+	}
+
+	if customURL != "" || customTitle != "" {
+		if customURL == "" || customTitle == "" {
+			respondError(w, http.StatusBadRequest, "Both mediaUrl and mediaTitle are required for custom hosted media")
+			return
+		}
+		validURL, validTitle, err := auth.ValidateCustomMedia(customURL, customTitle)
+		if err != nil {
+			respondError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		mediaSourceType = "custom"
+		resolvedAssetID = ""
+		resolvedMediaURL = validURL
+		resolvedMediaTitle = validTitle
+		resolvedDuration = 0
+	} else if mediaAssetID != "" {
+		if h.MediaAssetRepo == nil {
+			respondError(w, http.StatusInternalServerError, "Media catalog unavailable")
+			return
+		}
+		asset, err := h.MediaAssetRepo.FindByAssetID(ctx, mediaAssetID)
+		if err != nil || asset == nil {
+			respondError(w, http.StatusBadRequest, fmt.Sprintf("Catalog media asset %q not found", mediaAssetID))
+			return
+		}
+		mediaSourceType = "catalog"
+		resolvedAssetID = asset.AssetID
+		resolvedMediaURL = asset.MediaURL
+		resolvedMediaTitle = asset.Title
+		resolvedDuration = asset.DurationSeconds
+	} else {
+		// Default screening: Big Buck Bunny from catalog or fallback
+		mediaSourceType = "catalog"
+		resolvedAssetID = "big-buck-bunny"
+		resolvedMediaTitle = "Big Buck Bunny"
+		resolvedMediaURL = "https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/BigBuckBunny.mp4"
+		resolvedDuration = 596
+		if h.MediaAssetRepo != nil {
+			if asset, err := h.MediaAssetRepo.FindByAssetID(ctx, "big-buck-bunny"); err == nil && asset != nil {
+				resolvedAssetID = asset.AssetID
+				resolvedMediaTitle = asset.Title
+				resolvedMediaURL = asset.MediaURL
+				resolvedDuration = asset.DurationSeconds
+			}
+		}
 	}
 
 	room := &models.Room{
@@ -205,7 +291,11 @@ func (h *Handler) CreateRoom(w http.ResponseWriter, r *http.Request) {
 		Name:                    validRoomName,
 		IsActive:                true,
 		HostParticipantID:       participantID,
-		MediaURL:                mediaURL,
+		MediaSourceType:         mediaSourceType,
+		MediaAssetID:            resolvedAssetID,
+		MediaTitle:              resolvedMediaTitle,
+		MediaURL:                resolvedMediaURL,
+		DurationSeconds:         resolvedDuration,
 		PlaybackPositionSeconds: 0,
 		IsPaused:                true,
 		DirectorCutEnabled:      false,
@@ -230,10 +320,15 @@ func (h *Handler) CreateRoom(w http.ResponseWriter, r *http.Request) {
 	log.Printf("[api] room %s (%s) created by %s (%s)", roomCode, validRoomName, displayName, participantID)
 
 	respondJSON(w, http.StatusCreated, models.CreateRoomResponse{
-		RoomCode:      roomCode,
-		Name:          validRoomName,
-		ParticipantID: participantID,
-		IsHost:        true,
+		RoomCode:        roomCode,
+		Name:            validRoomName,
+		ParticipantID:   participantID,
+		IsHost:          true,
+		MediaSourceType: mediaSourceType,
+		MediaAssetID:    resolvedAssetID,
+		MediaTitle:      resolvedMediaTitle,
+		MediaURL:        resolvedMediaURL,
+		DurationSeconds: resolvedDuration,
 	})
 }
 
@@ -352,13 +447,21 @@ func (h *Handler) GetUserRooms(w http.ResponseWriter, r *http.Request) {
 		codeUpper := strings.ToUpper(room.RoomCode)
 		createdCodes[codeUpper] = true
 		parts, _ := h.PartRepo.FindByRoom(ctx, room.RoomCode)
+		mediaTitle := models.FormatMediaTitle(room.MediaTitle, room.MediaURL)
+		sourceType := room.MediaSourceType
+		if sourceType == "" {
+			sourceType = "catalog"
+		}
 		createdRecords = append(createdRecords, models.UserRoomRecord{
 			RoomCode:          room.RoomCode,
 			Name:              room.Name,
 			HostDisplayName:   authUser.DisplayName,
 			HostParticipantID: room.HostParticipantID,
+			MediaSourceType:   sourceType,
+			MediaAssetID:      room.MediaAssetID,
+			MediaTitle:        mediaTitle,
 			MediaURL:          room.MediaURL,
-			MediaTitle:        formatMediaTitle(room.MediaURL),
+			DurationSeconds:   room.DurationSeconds,
 			ParticipantCount:  len(parts),
 			CreatedAt:         room.CreatedAt,
 			IsHost:            true,
@@ -407,13 +510,21 @@ func (h *Handler) GetUserRooms(w http.ResponseWriter, r *http.Request) {
 		}
 
 		codeUpper := strings.ToUpper(room.RoomCode)
+		mediaTitle := models.FormatMediaTitle(room.MediaTitle, room.MediaURL)
+		sourceType := room.MediaSourceType
+		if sourceType == "" {
+			sourceType = "catalog"
+		}
 		joinedRecords = append(joinedRecords, models.UserRoomRecord{
 			RoomCode:          room.RoomCode,
 			Name:              room.Name,
 			HostDisplayName:   hostName,
 			HostParticipantID: room.HostParticipantID,
+			MediaSourceType:   sourceType,
+			MediaAssetID:      room.MediaAssetID,
+			MediaTitle:        mediaTitle,
 			MediaURL:          room.MediaURL,
-			MediaTitle:        formatMediaTitle(room.MediaURL),
+			DurationSeconds:   room.DurationSeconds,
 			ParticipantCount:  len(parts),
 			CreatedAt:         room.CreatedAt,
 			JoinedAt:          joinedAtMap[codeUpper],
@@ -499,23 +610,7 @@ func (h *Handler) LeaveRoom(w http.ResponseWriter, r *http.Request) {
 }
 
 func formatMediaTitle(urlStr string) string {
-	if urlStr == "" {
-		return "Feature Film"
-	}
-	parts := strings.Split(urlStr, "/")
-	filename := parts[len(parts)-1]
-	if qIdx := strings.Index(filename, "?"); qIdx != -1 {
-		filename = filename[:qIdx]
-	}
-	if dotIdx := strings.LastIndex(filename, "."); dotIdx != -1 {
-		filename = filename[:dotIdx]
-	}
-	cleaned := strings.ReplaceAll(strings.ReplaceAll(filename, "-", " "), "_", " ")
-	cleaned = strings.TrimSpace(cleaned)
-	if cleaned == "" {
-		return "Feature Film"
-	}
-	return cleaned
+	return models.FormatMediaTitle("", urlStr)
 }
 
 // GetCommentary handles GET /api/rooms/{roomCode}/commentary

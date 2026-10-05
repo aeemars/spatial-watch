@@ -24,17 +24,53 @@ const Cinema = (() => {
     { x: 2.2, y: -1.5, z: -1 },
   ];
 
-  function init(mediaUrl, hostStatus) {
+  let isMediaReadyState = false;
+
+  function init(mediaUrl, hostStatus, onReadyCallback, onErrorCallback) {
     isHost = hostStatus;
     canvas = document.getElementById('cinema-canvas');
     video = document.getElementById('cinema-video');
 
     if (!canvas || !video) return;
 
-    // Set up video
-    video.src = mediaUrl;
+    // Reset error overlay
+    hideMediaError();
+
+    // Set up video with CORS and lifecycle hooks
     video.crossOrigin = 'anonymous';
-    video.load();
+    video.preload = 'metadata';
+
+    video.onloadedmetadata = () => {
+      isMediaReadyState = true;
+      updateScreenDimensions();
+      if (typeof onReadyCallback === 'function') onReadyCallback(video);
+      if (window.XR && typeof XR.setMediaReady === 'function') {
+        XR.setMediaReady(true, { duration: video.duration });
+      }
+    };
+
+    video.onerror = (e) => {
+      isMediaReadyState = false;
+      console.warn('[cinema] video load error:', video.error);
+      showMediaError(video.error);
+      if (typeof onErrorCallback === 'function') onErrorCallback(video.error);
+      if (window.XR && typeof XR.setMediaReady === 'function') {
+        XR.setMediaReady(false);
+      }
+    };
+
+    // If source changed, load it
+    if (video.src !== mediaUrl) {
+      video.src = mediaUrl;
+      video.load();
+    } else if (video.readyState >= 1) {
+      // Already has metadata
+      isMediaReadyState = true;
+      if (typeof onReadyCallback === 'function') onReadyCallback(video);
+      if (window.XR && typeof XR.setMediaReady === 'function') {
+        XR.setMediaReady(true, { duration: video.duration });
+      }
+    }
 
     // Initialize Three.js
     scene = new THREE.Scene();
@@ -140,8 +176,14 @@ const Cinema = (() => {
     videoTexture.minFilter = THREE.LinearFilter;
     videoTexture.magFilter = THREE.LinearFilter;
 
-    // Screen mesh (16:9 aspect)
-    const screenGeo = new THREE.PlaneGeometry(9, 5.0625);
+    // Screen mesh (dynamic aspect ratio based on video metadata)
+    let aspect = 16 / 9;
+    if (video.videoWidth && video.videoHeight) {
+      aspect = video.videoWidth / video.videoHeight;
+    }
+    const width = 9;
+    const height = width / aspect;
+    const screenGeo = new THREE.PlaneGeometry(width, height);
     const screenMat = new THREE.MeshBasicMaterial({
       map: videoTexture,
       side: THREE.FrontSide,
@@ -149,6 +191,88 @@ const Cinema = (() => {
     videoMesh = new THREE.Mesh(screenGeo, screenMat);
     videoMesh.position.set(0, 1.5, -7.05);
     scene.add(videoMesh);
+  }
+
+  function updateScreenDimensions() {
+    if (!videoMesh || !video || !video.videoWidth || !video.videoHeight) return;
+    const aspect = video.videoWidth / video.videoHeight;
+    const width = 9;
+    const height = width / aspect;
+    if (videoMesh.geometry) videoMesh.geometry.dispose();
+    videoMesh.geometry = new THREE.PlaneGeometry(width, height);
+  }
+
+  function preloadMedia(mediaUrl, onReady, onError) {
+    video = document.getElementById('cinema-video');
+    if (!video) return;
+
+    video.crossOrigin = 'anonymous';
+    video.preload = 'metadata';
+
+    const handleLoadedMetadata = () => {
+      isMediaReadyState = true;
+      if (typeof onReady === 'function') onReady(video);
+      if (window.XR && typeof XR.setMediaReady === 'function') {
+        XR.setMediaReady(true, { duration: video.duration });
+      }
+    };
+
+    const handleError = () => {
+      isMediaReadyState = false;
+      if (typeof onError === 'function') onError(video.error);
+      if (window.XR && typeof XR.setMediaReady === 'function') {
+        XR.setMediaReady(false);
+      }
+    };
+
+    video.onloadedmetadata = handleLoadedMetadata;
+    video.onerror = handleError;
+
+    if (video.src !== mediaUrl) {
+      isMediaReadyState = false;
+      video.src = mediaUrl;
+      video.load();
+    } else if (video.readyState >= 1) {
+      handleLoadedMetadata();
+    }
+  }
+
+  function showMediaError(errorDetails) {
+    const overlay = document.getElementById('cinema-error-overlay');
+    const msgEl = document.getElementById('cinema-error-message');
+    const guidanceEl = document.getElementById('cinema-error-guidance');
+    const backBtn = document.getElementById('btn-cinema-error-back');
+    if (!overlay) return;
+
+    let reason = 'The media file could not be loaded into the WebGL cinema screen.';
+    let guidance = 'Common causes: The remote server is blocking Cross-Origin requests (CORS), the URL has expired, or the codec is incompatible. Direct HTTPS MP4 streams are required.';
+
+    if (errorDetails) {
+      if (errorDetails.code === 2) {
+        reason = 'A network error occurred while streaming the media file.';
+      } else if (errorDetails.code === 4) {
+        reason = 'Video stream unreachable or blocked by CORS security headers.';
+        guidance = 'The remote host did not provide an "Access-Control-Allow-Origin: *" header, or the file is not a standard H.264/AAC MP4. YouTube/Vimeo links cannot be played as direct WebGL textures.';
+      }
+    }
+
+    if (msgEl) msgEl.textContent = reason;
+    if (guidanceEl) guidanceEl.textContent = guidance;
+    overlay.hidden = false;
+
+    if (backBtn) {
+      backBtn.onclick = () => {
+        overlay.hidden = true;
+        if (window.App && typeof App.showScreen === 'function') {
+          App.showScreen('lobby');
+        }
+      };
+    }
+  }
+
+  function hideMediaError() {
+    const overlay = document.getElementById('cinema-error-overlay');
+    if (overlay) overlay.hidden = true;
   }
 
   function addLighting() {
@@ -358,7 +482,11 @@ const Cinema = (() => {
     addSeatMarker,
     removeSeatMarker,
     destroy,
+    preloadMedia,
+    showMediaError,
+    hideMediaError,
     getVideo: () => video,
     isPlaying: () => isPlaying,
+    isMediaReady: () => isMediaReadyState,
   };
 })();

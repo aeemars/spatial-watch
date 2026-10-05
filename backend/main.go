@@ -75,18 +75,19 @@ func main() {
 	reactionRepo := repository.NewReactionRepo(db)
 	userRepo := repository.NewUserRepo(db)
 	sessionRepo := repository.NewSessionRepo(db)
+	mediaAssetRepo := repository.NewMediaAssetRepo(db)
 
 	// Initialize auth service
 	authService := auth.NewAuthService(userRepo, sessionRepo, cfg)
 
 	// Seed default data
-	seed.Run(commentRepo)
+	seed.Run(commentRepo, mediaAssetRepo)
 
 	// Initialize WebSocket hub
 	hub := ws.NewHub(roomRepo, partRepo, reactionRepo)
 
 	// Initialize handlers
-	handler := handlers.NewHandler(roomRepo, partRepo, commentRepo, reactionRepo, hub, authService, cfg.CORSAllowedOrigins)
+	handler := handlers.NewHandler(roomRepo, partRepo, commentRepo, reactionRepo, hub, authService, mediaAssetRepo, cfg.CORSAllowedOrigins)
 
 	// Set up router
 	r := mux.NewRouter()
@@ -100,6 +101,9 @@ func main() {
 	// Public auth endpoints
 	api.HandleFunc("/auth/session", handler.GetSession).Methods("GET", "OPTIONS")
 	api.HandleFunc("/auth/logout", handler.Logout).Methods("POST", "OPTIONS")
+
+	// Curated short film catalog
+	api.HandleFunc("/media-assets", handler.GetMediaAssets).Methods("GET", "OPTIONS")
 
 	// Protected routes (require active session)
 	protected := api.PathPrefix("").Subrouter()

@@ -128,9 +128,12 @@
     <!-- MODAL: Create Room                              -->
     <!-- ═══════════════════════════════════════════════ -->
     <div class="modal-overlay" id="modal-create" role="dialog" aria-labelledby="modal-create-title" aria-modal="true" hidden>
-      <div class="modal">
+      <div class="modal modal--create">
         <div class="modal__header">
-          <h2 class="modal__title" id="modal-create-title">Create a Room</h2>
+          <div class="modal__title-group">
+            <h2 class="modal__title" id="modal-create-title">Create a Room</h2>
+            <span class="chip chip--gold chip--xs">Cinema Host</span>
+          </div>
           <button class="btn btn--ghost btn--icon modal__close" id="modal-create-close" type="button" aria-label="Close">
             <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
           </button>
@@ -145,6 +148,56 @@
             <label class="label" for="create-name">Your Display Name</label>
             <input class="input" id="create-name" type="text" placeholder="Enter your display name" autocomplete="nickname" enterkeyhint="go" maxlength="32" required>
             <p class="helper-text" id="create-name-error" hidden></p>
+          </div>
+
+          <!-- Media Source Selector -->
+          <div class="form-group form-group--media">
+            <label class="label">Screening Film Selection</label>
+            <div class="media-source-tabs" role="tablist">
+              <button class="media-tab is-active" id="tab-media-catalog" type="button" role="tab" aria-selected="true" aria-controls="pane-media-catalog">
+                <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="5 3 19 12 5 21 5 3"/></svg>
+                <span>Curated Short Films</span>
+              </button>
+              <button class="media-tab" id="tab-media-custom" type="button" role="tab" aria-selected="false" aria-controls="pane-media-custom">
+                <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></svg>
+                <span>Hosted MP4 URL</span>
+              </button>
+            </div>
+
+            <!-- Pane 1: Curated Short Films Catalog -->
+            <div class="media-pane" id="pane-media-catalog" role="tabpanel">
+              <div class="catalog-grid" id="catalog-card-list">
+                <!-- Dynamically populated via API.getMediaAssets() -->
+                <div class="catalog-loading">
+                  <span class="spinner" aria-label="Loading catalog"></span>
+                  <span>Loading short film catalog…</span>
+                </div>
+              </div>
+            </div>
+
+            <!-- Pane 2: Custom Hosted MP4 -->
+            <div class="media-pane is-hidden" id="pane-media-custom" role="tabpanel">
+              <div class="custom-media-form">
+                <div class="form-group">
+                  <label class="label label--sm" for="create-custom-title">Film / Video Title</label>
+                  <input class="input input--sm" id="create-custom-title" type="text" placeholder="e.g., Independent Sci-Fi Short" maxlength="100">
+                  <p class="helper-text" id="create-custom-title-error" hidden></p>
+                </div>
+                <div class="form-group">
+                  <label class="label label--sm" for="create-custom-url">Direct HTTPS MP4 URL</label>
+                  <input class="input input--sm" id="create-custom-url" type="url" placeholder="https://example.com/videos/screening.mp4">
+                  <p class="helper-text" id="create-custom-url-error" hidden></p>
+                </div>
+                <div class="custom-media-notice">
+                  <div class="notice-icon">
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="16" x2="12" y2="12"/><line x1="12" y1="8" x2="12.01" y2="8"/></svg>
+                  </div>
+                  <div class="notice-text">
+                    <strong>WebXR Cinema Requirement:</strong> Must be a direct <code>https://</code> URL pointing to an <code>.mp4</code> file. The hosting server must have CORS enabled (<code>Access-Control-Allow-Origin: *</code>). YouTube and Vimeo embeds cannot be projected onto 3D WebXR cinema screens.
+                  </div>
+                </div>
+              </div>
+            </div>
           </div>
         </div>
         <div class="modal__footer">
@@ -316,10 +369,38 @@
         </header>
 
         <div class="lobby__content">
+          <!-- VR Readiness Preflight Card -->
+          <div class="card card--vr-readiness" id="lobby-vr-readiness">
+            <div class="card__header">
+              <div class="vr-readiness__title-group">
+                <span class="vr-readiness__dot" id="vr-readiness-dot"></span>
+                <h3 class="card__title" id="vr-readiness-title">Headset & VR Preflight</h3>
+              </div>
+              <span class="chip chip--gold chip--xs" id="vr-readiness-chip">Checking…</span>
+            </div>
+            <div class="card__body vr-readiness__body">
+              <div class="vr-preflight-item" id="preflight-xr">
+                <span class="preflight-item__status" id="preflight-xr-icon">●</span>
+                <span class="preflight-item__text" id="preflight-xr-text">WebXR Immersive Session</span>
+              </div>
+              <div class="vr-preflight-item" id="preflight-secure">
+                <span class="preflight-item__status" id="preflight-secure-icon">●</span>
+                <span class="preflight-item__text" id="preflight-secure-text">Secure Context (HTTPS)</span>
+              </div>
+              <div class="vr-preflight-item" id="preflight-input">
+                <span class="preflight-item__status" id="preflight-input-icon">●</span>
+                <span class="preflight-item__text" id="preflight-input-text">Input: Hand Tracking & Gaze</span>
+              </div>
+            </div>
+          </div>
+
           <!-- Tonight's Screening Card -->
           <div class="card card--screening">
             <div class="card__header">
-              <h2 class="card__title">Tonight's Screening</h2>
+              <div class="screening-title-wrap">
+                <h2 class="card__title">Tonight's Screening</h2>
+                <span class="badge badge--source" id="lobby-source-badge">Curated Film</span>
+              </div>
               <span class="chip chip--violet" id="lobby-dc-badge" hidden>
                 <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/></svg>
                 Director's Cut
@@ -327,7 +408,7 @@
             </div>
             <div class="card__body">
               <p class="card__media-title" id="lobby-media-title">Big Buck Bunny</p>
-              <p class="card__meta text--secondary" id="lobby-media-meta">Demo Film · 10:34</p>
+              <p class="card__meta text--secondary" id="lobby-media-meta">Curated Short Film · 9m 56s</p>
             </div>
           </div>
 
@@ -346,9 +427,9 @@
         </div>
 
         <footer class="lobby__footer">
-          <button class="btn btn--primary btn--lg btn--full" id="btn-enter-cinema" type="button">
-            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polygon points="5 3 19 12 5 21 5 3"/></svg>
-            Enter Cinema
+          <button class="btn btn--primary btn--lg btn--full btn--enter-cinema" id="btn-enter-cinema" type="button">
+            <svg class="icon-enter-vr" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="2" y="7" width="20" height="10" rx="3"/><path d="M7 17l2-2h6l2 2"/><circle cx="7" cy="12" r="1.5"/><circle cx="17" cy="12" r="1.5"/></svg>
+            <span id="btn-enter-cinema-label">Enter Cinema</span>
           </button>
           <div class="lobby__footer-actions">
             <button class="btn btn--ghost btn--sm" id="btn-leave-lobby" type="button">Leave Room</button>
@@ -443,6 +524,27 @@
         </div>
         <h4 class="commentary-card__title" id="commentary-title">Opening Composition</h4>
         <p class="commentary-card__body" id="commentary-body">Commentary text here.</p>
+      </div>
+
+      <!-- Media Error Overlay (CORS / network failure) -->
+      <div class="cinema-error-overlay" id="cinema-error-overlay" hidden>
+        <div class="cinema-error-card">
+          <div class="cinema-error__icon">
+            <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
+          </div>
+          <h3 class="cinema-error__title" id="cinema-error-title">Unable to Stream Media</h3>
+          <p class="cinema-error__message" id="cinema-error-message">
+            The media stream could not be projected onto the virtual cinema screen.
+          </p>
+          <div class="cinema-error__guidance" id="cinema-error-guidance">
+            Common causes: The remote server is blocking Cross-Origin requests (CORS), the URL has expired, or the codec is incompatible with WebXR textures.
+          </div>
+          <div class="cinema-error__actions">
+            <button class="btn btn--primary btn--md" id="btn-cinema-error-back" type="button">
+              Return to Lobby
+            </button>
+          </div>
+        </div>
       </div>
 
       <!-- Reaction float container -->

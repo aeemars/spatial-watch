@@ -1,6 +1,7 @@
 package models
 
 import (
+	"strings"
 	"time"
 
 	"go.mongodb.org/mongo-driver/v2/bson"
@@ -56,6 +57,22 @@ type UpdateProfileResponse struct {
 	User SanitizedUser `json:"user"`
 }
 
+// MediaAsset represents a curated short film in the catalog
+type MediaAsset struct {
+	ID                    bson.ObjectID `bson:"_id,omitempty" json:"id"`
+	AssetID               string        `bson:"assetId" json:"assetId"`
+	Title                 string        `bson:"title" json:"title"`
+	Description           string        `bson:"description" json:"description"`
+	DurationSeconds       float64       `bson:"durationSeconds" json:"durationSeconds"`
+	PosterURL             string        `bson:"posterUrl,omitempty" json:"posterUrl,omitempty"`
+	Gradient              string        `bson:"gradient,omitempty" json:"gradient,omitempty"`
+	MediaURL              string        `bson:"mediaUrl" json:"mediaUrl"`
+	CORSReady             bool          `bson:"corsReady" json:"corsReady"`
+	DirectorCutAvailable  bool          `bson:"directorCutAvailable" json:"directorCutAvailable"`
+	CommentaryTemplateRef string        `bson:"commentaryTemplateRef,omitempty" json:"commentaryTemplateRef,omitempty"`
+	CreatedAt             time.Time     `bson:"createdAt" json:"createdAt"`
+}
+
 // Room represents a watch room
 type Room struct {
 	ID                      bson.ObjectID `bson:"_id,omitempty" json:"id"`
@@ -63,7 +80,11 @@ type Room struct {
 	Name                    string        `bson:"name" json:"name"`
 	IsActive                bool          `bson:"isActive" json:"isActive"`
 	HostParticipantID       string        `bson:"hostParticipantId" json:"hostParticipantId"`
+	MediaSourceType         string        `bson:"mediaSourceType" json:"mediaSourceType"` // "catalog" | "custom"
+	MediaAssetID            string        `bson:"mediaAssetId,omitempty" json:"mediaAssetId,omitempty"`
+	MediaTitle              string        `bson:"mediaTitle" json:"mediaTitle"`
 	MediaURL                string        `bson:"mediaUrl" json:"mediaUrl"`
+	DurationSeconds         float64       `bson:"durationSeconds,omitempty" json:"durationSeconds,omitempty"`
 	PlaybackPositionSeconds float64       `bson:"playbackPositionSeconds" json:"playbackPositionSeconds"`
 	IsPaused                bool          `bson:"isPaused" json:"isPaused"`
 	DirectorCutEnabled      bool          `bson:"directorCutEnabled" json:"directorCutEnabled"`
@@ -104,17 +125,24 @@ type Reaction struct {
 
 // CreateRoomRequest is the request body for creating a room
 type CreateRoomRequest struct {
-	RoomName    string `json:"roomName"`
-	DisplayName string `json:"displayName"`
-	MediaURL    string `json:"mediaUrl,omitempty"`
+	RoomName     string `json:"roomName"`
+	DisplayName  string `json:"displayName"`
+	MediaAssetID string `json:"mediaAssetId,omitempty"`
+	MediaURL     string `json:"mediaUrl,omitempty"`
+	MediaTitle   string `json:"mediaTitle,omitempty"`
 }
 
 // CreateRoomResponse is returned after creating a room
 type CreateRoomResponse struct {
-	RoomCode      string `json:"roomCode"`
-	Name          string `json:"name"`
-	ParticipantID string `json:"participantId"`
-	IsHost        bool   `json:"isHost"`
+	RoomCode        string  `json:"roomCode"`
+	Name            string  `json:"name"`
+	ParticipantID   string  `json:"participantId"`
+	IsHost          bool    `json:"isHost"`
+	MediaSourceType string  `json:"mediaSourceType,omitempty"`
+	MediaAssetID    string  `json:"mediaAssetId,omitempty"`
+	MediaTitle      string  `json:"mediaTitle,omitempty"`
+	MediaURL        string  `json:"mediaUrl,omitempty"`
+	DurationSeconds float64 `json:"durationSeconds,omitempty"`
 }
 
 // JoinRoomRequest is the request body for joining a room
@@ -137,8 +165,11 @@ type UserRoomRecord struct {
 	Name              string    `json:"name"`
 	HostDisplayName   string    `json:"hostDisplayName,omitempty"`
 	HostParticipantID string    `json:"hostParticipantId"`
-	MediaURL          string    `json:"mediaUrl"`
+	MediaSourceType   string    `json:"mediaSourceType,omitempty"`
+	MediaAssetID      string    `json:"mediaAssetId,omitempty"`
 	MediaTitle        string    `json:"mediaTitle"`
+	MediaURL          string    `json:"mediaUrl"`
+	DurationSeconds   float64   `json:"durationSeconds,omitempty"`
 	ParticipantCount  int       `json:"participantCount"`
 	CreatedAt         time.Time `json:"createdAt"`
 	JoinedAt          time.Time `json:"joinedAt,omitempty"`
@@ -182,13 +213,41 @@ type DirectorCutPayload struct {
 type RoomStatePayload struct {
 	RoomCode           string        `json:"roomCode"`
 	Name               string        `json:"name"`
+	MediaSourceType    string        `json:"mediaSourceType,omitempty"`
+	MediaAssetID       string        `json:"mediaAssetId,omitempty"`
+	MediaTitle         string        `json:"mediaTitle,omitempty"`
 	MediaURL           string        `json:"mediaUrl"`
+	DurationSeconds    float64       `json:"durationSeconds,omitempty"`
 	IsPaused           bool          `json:"isPaused"`
 	Position           float64       `json:"position"`
 	DirectorCutEnabled bool          `json:"directorCutEnabled"`
 	HostParticipantID  string        `json:"hostParticipantId"`
 	Participants       []Participant `json:"participants"`
 	ServerTime         int64         `json:"serverTime"`
+}
+
+// FormatMediaTitle returns a clean display title for a media URL or title
+func FormatMediaTitle(title, urlStr string) string {
+	if trimmed := strings.TrimSpace(title); trimmed != "" {
+		return trimmed
+	}
+	if urlStr == "" {
+		return "Feature Film"
+	}
+	parts := strings.Split(urlStr, "/")
+	filename := parts[len(parts)-1]
+	if qIdx := strings.Index(filename, "?"); qIdx != -1 {
+		filename = filename[:qIdx]
+	}
+	if dotIdx := strings.LastIndex(filename, "."); dotIdx != -1 {
+		filename = filename[:dotIdx]
+	}
+	cleaned := strings.ReplaceAll(strings.ReplaceAll(filename, "-", " "), "_", " ")
+	cleaned = strings.TrimSpace(cleaned)
+	if cleaned == "" {
+		return "Feature Film"
+	}
+	return cleaned
 }
 
 // Valid reaction types

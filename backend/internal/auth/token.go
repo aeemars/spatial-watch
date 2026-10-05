@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"math/big"
+	"net/url"
 	"strings"
 	"unicode"
 )
@@ -15,6 +16,7 @@ import (
 var (
 	ErrInvalidDisplayName = errors.New("display name must be 2-32 characters without control characters or HTML")
 	ErrInvalidRoomName    = errors.New("room name must be 2-50 characters without control characters or HTML")
+	ErrInvalidCustomMedia = errors.New("custom media must be a valid HTTPS URL pointing to an .mp4 file with a valid title")
 )
 
 // GenerateToken generates a cryptographically secure, opaque random session token
@@ -139,3 +141,55 @@ func ValidateRoomName(raw string) (string, error) {
 
 	return normalized, nil
 }
+
+// ValidateCustomMedia validates host-provided custom media:
+// - URL must be https://
+// - Path must end with .mp4 (case-insensitive)
+// - Title must be 2 to 100 characters without control characters or HTML brackets
+func ValidateCustomMedia(rawURL, rawTitle string) (string, string, error) {
+	trimmedURL := strings.TrimSpace(rawURL)
+	trimmedTitle := strings.TrimSpace(rawTitle)
+
+	if trimmedURL == "" || trimmedTitle == "" {
+		return "", "", ErrInvalidCustomMedia
+	}
+
+	u, err := url.Parse(trimmedURL)
+	if err != nil || u.Scheme != "https" || u.Host == "" {
+		return "", "", ErrInvalidCustomMedia
+	}
+
+	// Must have .mp4 extension
+	lowerPath := strings.ToLower(u.Path)
+	if !strings.HasSuffix(lowerPath, ".mp4") {
+		return "", "", ErrInvalidCustomMedia
+	}
+
+	// Validate title: 2-100 characters, no control chars or HTML
+	for _, r := range trimmedTitle {
+		if unicode.IsControl(r) || r == '<' || r == '>' {
+			return "", "", ErrInvalidCustomMedia
+		}
+	}
+
+	parts := strings.Fields(trimmedTitle)
+	normalizedTitle := strings.Join(parts, " ")
+	runes := []rune(normalizedTitle)
+	if len(runes) < 2 || len(runes) > 100 {
+		return "", "", ErrInvalidCustomMedia
+	}
+
+	hasAlphanumeric := false
+	for _, r := range runes {
+		if unicode.IsLetter(r) || unicode.IsDigit(r) {
+			hasAlphanumeric = true
+			break
+		}
+	}
+	if !hasAlphanumeric {
+		return "", "", ErrInvalidCustomMedia
+	}
+
+	return trimmedURL, normalizedTitle, nil
+}
+

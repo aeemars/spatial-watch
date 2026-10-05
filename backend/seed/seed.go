@@ -65,28 +65,93 @@ func DefaultCommentaryCues() []models.CommentaryCue {
 	}
 }
 
-// Run inserts default commentary cues if they don't already exist
-func Run(commentRepo *repository.CommentaryRepo) {
+// DefaultMediaAssets returns curated seed films for the catalog
+func DefaultMediaAssets() []models.MediaAsset {
+	return []models.MediaAsset{
+		{
+			AssetID:               "big-buck-bunny",
+			Title:                 "Big Buck Bunny",
+			Description:           "A large and lovable rabbit deals with bullying forest creatures in Blender's open-source classic comedy.",
+			DurationSeconds:       596,
+			PosterURL:             "https://peach.blender.org/wp-content/uploads/bbb-splash.png",
+			Gradient:              "linear-gradient(135deg, #163820 0%, #0c1f13 100%)",
+			MediaURL:              "https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/BigBuckBunny.mp4",
+			CORSReady:             true,
+			DirectorCutAvailable:  true,
+			CommentaryTemplateRef: "default",
+		},
+		{
+			AssetID:              "tears-of-steel",
+			Title:                "Tears of Steel",
+			Description:          "In a dystopian future, a group of scientists and soldiers battle rogue cyborgs in post-apocalyptic Amsterdam.",
+			DurationSeconds:      734,
+			PosterURL:            "https://mango.blender.org/wp-content/uploads/2012/09/02_celia_04.jpg",
+			Gradient:             "linear-gradient(135deg, #2b1f3d 0%, #110c1c 100%)",
+			MediaURL:             "https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/TearsOfSteel.mp4",
+			CORSReady:            true,
+			DirectorCutAvailable: false,
+		},
+		{
+			AssetID:              "sintel",
+			Title:                "Sintel",
+			Description:          "A lonely young woman embarks on a dangerous fantasy quest across harsh lands to find her stolen pet baby dragon.",
+			DurationSeconds:      888,
+			PosterURL:            "https://durian.blender.org/wp-content/themes/durian/images/header.jpg",
+			Gradient:             "linear-gradient(135deg, #3d2a1b 0%, #1c1209 100%)",
+			MediaURL:             "https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/Sintel.mp4",
+			CORSReady:            true,
+			DirectorCutAvailable: false,
+		},
+		{
+			AssetID:              "elephants-dream",
+			Title:                "Elephants Dream",
+			Description:          "Two explorers journey through the surreal and mechanical innards of a colossal, enigmatic computing machine.",
+			DurationSeconds:      653,
+			PosterURL:            "https://orange.blender.org/wp-content/themes/orange/images/ed_header.jpg",
+			Gradient:             "linear-gradient(135deg, #1f2b3d 0%, #0c141c 100%)",
+			MediaURL:             "https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/ElephantsDream.mp4",
+			CORSReady:            true,
+			DirectorCutAvailable: false,
+		},
+	}
+}
+
+// Run inserts default commentary cues and media assets if they don't already exist
+func Run(commentRepo *repository.CommentaryRepo, mediaRepo *repository.MediaAssetRepo) {
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
 
 	// Check if default cues already exist
-	count, err := commentRepo.Count(ctx, bson.M{"templateRef": "default"})
-	if err != nil {
-		log.Printf("[seed] failed to check existing cues: %v", err)
-		return
+	if commentRepo != nil {
+		count, err := commentRepo.Count(ctx, bson.M{"templateRef": "default"})
+		if err != nil {
+			log.Printf("[seed] failed to check existing cues: %v", err)
+		} else if count > 0 {
+			log.Printf("[seed] %d default commentary cues already exist, skipping seed", count)
+		} else {
+			cues := DefaultCommentaryCues()
+			if err := commentRepo.InsertMany(ctx, cues); err != nil {
+				log.Printf("[seed] failed to insert commentary cues: %v", err)
+			} else {
+				log.Printf("[seed] inserted %d default commentary cues", len(cues))
+			}
+		}
 	}
 
-	if count > 0 {
-		log.Printf("[seed] %d default commentary cues already exist, skipping seed", count)
-		return
+	// Seed media catalog assets
+	if mediaRepo != nil {
+		mCount, err := mediaRepo.Count(ctx, bson.M{})
+		if err != nil {
+			log.Printf("[seed] failed to check existing media assets: %v", err)
+		} else if mCount > 0 {
+			log.Printf("[seed] %d media assets already exist, skipping seed", mCount)
+		} else {
+			assets := DefaultMediaAssets()
+			if err := mediaRepo.InsertMany(ctx, assets); err != nil {
+				log.Printf("[seed] failed to insert media assets: %v", err)
+			} else {
+				log.Printf("[seed] inserted %d default media assets into catalog", len(assets))
+			}
+		}
 	}
-
-	cues := DefaultCommentaryCues()
-	if err := commentRepo.InsertMany(ctx, cues); err != nil {
-		log.Printf("[seed] failed to insert commentary cues: %v", err)
-		return
-	}
-
-	log.Printf("[seed] inserted %d default commentary cues", len(cues))
 }

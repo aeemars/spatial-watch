@@ -8,6 +8,7 @@ const XR = (() => {
   let xrSession = null;
   let xrSupported = false;
   let handSupported = false;
+  let mediaReady = false;
   let controllerGrips = [];
   let handModels = [];
   let uiPanel = null;
@@ -15,16 +16,20 @@ const XR = (() => {
   let gazeDwellTimer = null;
   const GAZE_DWELL_MS = 800;
 
+  const isQuest = /Quest|OculusBrowser/i.test(navigator.userAgent);
+  const isSecure = window.isSecureContext || window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1';
+
   // Check WebXR support
   async function checkSupport() {
     const statusEl = document.getElementById('xr-status');
     const statusText = document.getElementById('xr-status-text');
-    const statusDot = document.getElementById('xr-status-dot');
     const enterVRBtn = document.getElementById('btn-enter-vr');
 
     if (!navigator.xr) {
-      statusText.textContent = 'WebXR not available — desktop mode';
-      statusEl.classList.add('xr-status--unsupported');
+      xrSupported = false;
+      if (statusText) statusText.textContent = 'WebXR not available — desktop mode';
+      if (statusEl) statusEl.classList.add('xr-status--unsupported');
+      updatePreflightUI();
       return false;
     }
 
@@ -35,24 +40,117 @@ const XR = (() => {
     }
 
     if (xrSupported) {
-      statusText.textContent = 'Immersive VR available';
-      statusEl.classList.add('xr-status--supported');
       if (enterVRBtn) enterVRBtn.hidden = false;
-
-      // Check hand tracking
-      try {
-        // Hand tracking feature detection
-        handSupported = true; // Will be verified on session start
-        statusText.textContent = 'Immersive VR + hand tracking available';
-      } catch (e) {
-        handSupported = false;
+      handSupported = true; // Meta Quest Browser supports hand tracking
+      if (statusText) {
+        statusText.textContent = isQuest
+          ? 'Meta Quest VR + hand tracking ready'
+          : 'Immersive VR available';
       }
+      if (statusEl) statusEl.classList.add('xr-status--supported');
     } else {
-      statusText.textContent = 'VR not supported — desktop mode';
-      statusEl.classList.add('xr-status--unsupported');
+      if (statusText) statusText.textContent = 'VR not supported — desktop mode';
+      if (statusEl) statusEl.classList.add('xr-status--unsupported');
     }
 
+    updatePreflightUI();
     return xrSupported;
+  }
+
+  // Update media readiness status (called when video loadedmetadata fires)
+  function setMediaReady(ready, details = {}) {
+    mediaReady = !!ready;
+    updatePreflightUI();
+  }
+
+  // Update the lobby VR readiness preflight card and Enter button
+  function updatePreflightUI() {
+    const dot = document.getElementById('vr-readiness-dot');
+    const chip = document.getElementById('vr-readiness-chip');
+    const preflightXrIcon = document.getElementById('preflight-xr-icon');
+    const preflightXrText = document.getElementById('preflight-xr-text');
+    const preflightSecIcon = document.getElementById('preflight-secure-icon');
+    const preflightSecText = document.getElementById('preflight-secure-text');
+    const preflightInpIcon = document.getElementById('preflight-input-icon');
+    const preflightInpText = document.getElementById('preflight-input-text');
+    const enterBtn = document.getElementById('btn-enter-cinema');
+    const enterLabel = document.getElementById('btn-enter-cinema-label');
+
+    // Secure context status
+    if (preflightSecIcon && preflightSecText) {
+      if (isSecure) {
+        preflightSecIcon.className = 'preflight-item__status is-passed';
+        preflightSecIcon.textContent = '✓';
+        preflightSecText.textContent = 'Secure Connection: Verified (HTTPS)';
+      } else {
+        preflightSecIcon.className = 'preflight-item__status';
+        preflightSecIcon.textContent = '⚠️';
+        preflightSecText.textContent = 'Insecure Context: HTTPS required for VR';
+      }
+    }
+
+    if (xrSupported) {
+      // Immersive VR capable (e.g. Meta Quest Browser)
+      if (dot) {
+        dot.className = 'vr-readiness__dot' + (mediaReady ? ' is-ready' : '');
+      }
+      if (chip) {
+        chip.textContent = mediaReady
+          ? (isQuest ? 'Meta Quest VR Ready' : 'VR Ready')
+          : 'Loading Media…';
+        chip.className = 'chip chip--xs ' + (mediaReady ? 'chip--gold' : 'chip--violet');
+      }
+
+      if (preflightXrIcon && preflightXrText) {
+        preflightXrIcon.className = 'preflight-item__status is-passed';
+        preflightXrIcon.textContent = '✓';
+        preflightXrText.textContent = isQuest
+          ? 'Meta Quest: Immersive VR Ready'
+          : 'WebXR: Immersive VR Supported';
+      }
+
+      if (preflightInpIcon && preflightInpText) {
+        preflightInpIcon.className = 'preflight-item__status is-passed';
+        preflightInpIcon.textContent = '✓';
+        preflightInpText.textContent = 'Input: Hand Tracking & Gaze (Seated Mode)';
+      }
+
+      // Enter button
+      if (enterBtn && enterLabel) {
+        if (mediaReady) {
+          enterBtn.disabled = false;
+          enterLabel.textContent = 'Enter VR Cinema';
+        } else {
+          enterBtn.disabled = true;
+          enterLabel.textContent = 'Preparing Media Stream…';
+        }
+      }
+    } else {
+      // Desktop / 2D Browser Fallback
+      if (dot) dot.className = 'vr-readiness__dot is-desktop';
+      if (chip) {
+        chip.textContent = 'Desktop Preview Mode';
+        chip.className = 'chip chip--xs chip--neutral';
+      }
+
+      if (preflightXrIcon && preflightXrText) {
+        preflightXrIcon.className = 'preflight-item__status is-notice';
+        preflightXrIcon.textContent = 'ℹ';
+        preflightXrText.textContent = 'WebXR Unavailable: Desktop 3D Mode';
+      }
+
+      if (preflightInpIcon && preflightInpText) {
+        preflightInpIcon.className = 'preflight-item__status is-notice';
+        preflightInpIcon.textContent = 'ℹ';
+        preflightInpText.textContent = 'Input: Mouse Viewport & Keyboard';
+      }
+
+      // Enter button for desktop preview
+      if (enterBtn && enterLabel) {
+        enterBtn.disabled = false;
+        enterLabel.textContent = 'Enter Cinema (Desktop Preview)';
+      }
+    }
   }
 
   // Start immersive VR session
@@ -375,7 +473,10 @@ const XR = (() => {
     checkSupport,
     enterVR,
     exitVR,
+    setMediaReady,
+    updatePreflightUI,
     isSupported: () => xrSupported,
     isInVR: () => !!xrSession,
+    isMediaReady: () => mediaReady,
   };
 })();
