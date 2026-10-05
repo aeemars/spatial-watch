@@ -968,12 +968,13 @@ const App = (() => {
 
   async function updateRecordsBadge() {
     try {
+      await ensureSession();
       const data = await API.getUserRooms();
       const createdCount = (data.createdRooms || []).length;
       const joinedCount = (data.joinedRooms || []).length;
       const totalCount = createdCount + joinedCount;
 
-      const badgeNav = document.getElementById('records-badge');
+      const badgeNav = document.getElementById('records-chip-count') || document.getElementById('records-badge');
       if (badgeNav) {
         badgeNav.textContent = totalCount;
         badgeNav.hidden = totalCount === 0;
@@ -982,6 +983,7 @@ const App = (() => {
       const badgeHero = document.getElementById('hero-records-count');
       if (badgeHero) {
         badgeHero.textContent = totalCount;
+        badgeHero.hidden = totalCount === 0;
       }
 
       const badgeCreated = document.getElementById('badge-created-count');
@@ -1041,6 +1043,7 @@ const App = (() => {
     if (loadingEl) loadingEl.hidden = false;
 
     try {
+      await ensureSession();
       const data = await API.getUserRooms();
       const createdRooms = data.createdRooms || [];
       const joinedRooms = data.joinedRooms || [];
@@ -1050,7 +1053,8 @@ const App = (() => {
       if (badgeCreated) badgeCreated.textContent = createdRooms.length;
       const badgeJoined = document.getElementById('badge-joined-count');
       if (badgeJoined) badgeJoined.textContent = joinedRooms.length;
-      const badgeNav = document.getElementById('records-badge');
+
+      const badgeNav = document.getElementById('records-chip-count') || document.getElementById('records-badge');
       if (badgeNav) {
         const total = createdRooms.length + joinedRooms.length;
         badgeNav.textContent = total;
@@ -1058,7 +1062,16 @@ const App = (() => {
       }
       const badgeHero = document.getElementById('hero-records-count');
       if (badgeHero) {
-        badgeHero.textContent = createdRooms.length + joinedRooms.length;
+        const total = createdRooms.length + joinedRooms.length;
+        badgeHero.textContent = total;
+        badgeHero.hidden = total === 0;
+      }
+
+      // If user has no created rooms but has joined rooms, switch to joined tab automatically
+      if (createdRooms.length === 0 && joinedRooms.length > 0 && activeRecordsTab === 'created') {
+        switchRecordsTab('joined');
+      } else {
+        switchRecordsTab(activeRecordsTab || 'created');
       }
 
       // Render Created Rooms
@@ -1089,6 +1102,7 @@ const App = (() => {
         }
       }
     } catch (e) {
+      console.error('[records] failed to load room records:', e);
       showToast('Failed to load room records', 'error');
     } finally {
       if (loadingEl) loadingEl.hidden = true;
@@ -1099,10 +1113,11 @@ const App = (() => {
     const card = document.createElement('div');
     card.className = 'record-card';
 
-    const timeStr = formatRelativeTime(room.createdAt || room.joinedAt);
+    const rawTime = isCardHost ? room.createdAt : (room.joinedAt && !room.joinedAt.startsWith('0001') ? room.joinedAt : room.createdAt);
+    const timeStr = formatRelativeTime(rawTime);
     const mediaTitle = room.mediaTitle || extractMediaTitle(room.mediaUrl) || 'Spatial Screening';
     const rName = room.name || 'Screening Room';
-    const rCode = room.code;
+    const rCode = room.roomCode || room.code || '';
 
     card.innerHTML = `
       <div class="record-card__header">
@@ -1245,7 +1260,7 @@ const App = (() => {
   function formatRelativeTime(dateInput) {
     if (!dateInput) return 'recently';
     const date = new Date(dateInput);
-    if (isNaN(date.getTime())) return 'recently';
+    if (isNaN(date.getTime()) || date.getFullYear() < 2020) return 'recently';
 
     const diffSec = Math.floor((Date.now() - date.getTime()) / 1000);
     if (diffSec < 60) return 'just now';

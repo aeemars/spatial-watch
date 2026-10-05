@@ -349,7 +349,8 @@ func (h *Handler) GetUserRooms(w http.ResponseWriter, r *http.Request) {
 	createdRecords := make([]models.UserRoomRecord, 0, len(createdRooms))
 	createdCodes := make(map[string]bool, len(createdRooms))
 	for _, room := range createdRooms {
-		createdCodes[room.RoomCode] = true
+		codeUpper := strings.ToUpper(room.RoomCode)
+		createdCodes[codeUpper] = true
 		parts, _ := h.PartRepo.FindByRoom(ctx, room.RoomCode)
 		createdRecords = append(createdRecords, models.UserRoomRecord{
 			RoomCode:          room.RoomCode,
@@ -373,13 +374,16 @@ func (h *Handler) GetUserRooms(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Filter out rooms that user created or has left
+	// Filter out rooms that user created or has left, avoiding duplicate codes
 	var joinedCodes []string
 	joinedAtMap := make(map[string]time.Time)
 	for _, p := range participations {
-		if !createdCodes[p.RoomCode] && !p.HasLeft {
-			joinedCodes = append(joinedCodes, p.RoomCode)
-			joinedAtMap[p.RoomCode] = p.JoinedAt
+		codeUpper := strings.ToUpper(p.RoomCode)
+		if !createdCodes[codeUpper] && !p.HasLeft {
+			if _, exists := joinedAtMap[codeUpper]; !exists {
+				joinedCodes = append(joinedCodes, codeUpper)
+				joinedAtMap[codeUpper] = p.JoinedAt
+			}
 		}
 	}
 
@@ -402,6 +406,7 @@ func (h *Handler) GetUserRooms(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 
+		codeUpper := strings.ToUpper(room.RoomCode)
 		joinedRecords = append(joinedRecords, models.UserRoomRecord{
 			RoomCode:          room.RoomCode,
 			Name:              room.Name,
@@ -411,7 +416,7 @@ func (h *Handler) GetUserRooms(w http.ResponseWriter, r *http.Request) {
 			MediaTitle:        formatMediaTitle(room.MediaURL),
 			ParticipantCount:  len(parts),
 			CreatedAt:         room.CreatedAt,
-			JoinedAt:          joinedAtMap[room.RoomCode],
+			JoinedAt:          joinedAtMap[codeUpper],
 			IsHost:            false,
 			IsActive:          room.IsActive,
 		})
