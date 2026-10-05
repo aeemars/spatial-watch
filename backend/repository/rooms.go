@@ -5,6 +5,8 @@ import (
 	"crypto/rand"
 	"fmt"
 	"math/big"
+	"regexp"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -71,6 +73,7 @@ func (r *RoomRepo) Create(ctx context.Context, room *models.Room) error {
 	room.CreatedAt = time.Now()
 	room.UpdatedAt = time.Now()
 	room.IsPaused = true
+	room.IsActive = true
 	if r.col != nil {
 		_, err := r.col.InsertOne(ctx, room)
 		return err
@@ -80,6 +83,148 @@ func (r *RoomRepo) Create(ctx context.Context, room *models.Room) error {
 	copy := *room
 	r.memoryRooms[strings.ToUpper(room.RoomCode)] = &copy
 	return nil
+}
+
+// ExistsActiveByName checks if an active room already exists with the given name (case-insensitive)
+func (r *RoomRepo) ExistsActiveByName(ctx context.Context, name string) (bool, error) {
+	trimmed := strings.TrimSpace(name)
+	if trimmed == "" {
+		return false, nil
+	}
+
+	if r.col != nil {
+		pattern := fmt.Sprintf("^%s$", regexp.QuoteMeta(trimmed))
+		filter := bson.M{
+			"name": bson.M{
+				"$regex":   pattern,
+				"$options": "i",
+			},
+			"isActive": bson.M{"$ne": false},
+		}
+		count, err := r.col.CountDocuments(ctx, filter)
+		if err != nil {
+			return false, err
+		}
+		return count > 0, nil
+	}
+
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	for _, room := range r.memoryRooms {
+		if room.IsActive && strings.EqualFold(strings.TrimSpace(room.Name), trimmed) {
+			return true, nil
+		}
+	}
+	return false, nil
+}
+
+// FindByHost returns active rooms created by the host, ordered newest first
+func (r *RoomRepo) FindByHost(ctx context.Context, hostParticipantID string) ([]models.Room, error) {
+	if r.col != nil {
+		opts := options.Find().SetSort(bson.D{{Key: "createdAt", Value: -1}})
+		filter := bson.M{
+			"hostParticipantId": hostParticipantID,
+			"isActive":          bson.M{"$ne": false},
+		}
+		cursor, err := r.col.Find(ctx, filter, opts)
+		if err != nil {
+			return nil, err
+		}
+		defer cursor.Close(ctx)
+
+		var rooms []models.Room
+		if err := cursor.All(ctx, &rooms); err != nil {
+			return nil, err
+		}
+		return rooms, nil
+	}
+
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	var rooms []models.Room
+	for _, room := range r.memoryRooms {
+		if room.IsActive && room.HostParticipantID == hostParticipantID {
+			rooms = append(rooms, *room)
+		}
+	}
+	sort.Slice(rooms, func(i, j int) bool {
+		return rooms[i].CreatedAt.After(rooms[j].CreatedAt)
+	})
+	return rooms, nil
+}
+
+// FindActiveByCodes returns all active rooms matching the given room codes
+func (r *RoomRepo) FindActiveByCodes(ctx context.Context, codes []string) ([]models.Room, error) {
+	if len(codes) == 0 {
+		return []models.Room{}, nil
+	}
+
+	upperCodes := make([]string, len(codes))
+	for i, c := range codes {
+		upperCodes[i] = strings.ToUpper(c)
+	}
+
+	if r.col != nil {
+		opts := options.Find().SetSort(bson.D{{Key: "createdAt", Value: -1}})
+		filter := bson.M{
+			"roomCode": bson.M{"$in": upperCodes},
+			"isActive": bson.M{"$ne": false},
+		}
+		cursor, err := r.col.Find(ctx, filter, opts)
+		if err != nil {
+			return nil, err
+		}
+		defer cursor.Close(ctx)
+
+		var rooms []models.Room
+		if err := cursor.All(ctx, &rooms); err != nil {
+			return nil, err
+		}
+		return rooms, nil
+	}
+
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	codeSet := make(map[string]bool, len(upperCodes))
+	for _, c := range upperCodes {
+		codeSet[c] = true
+	}
+
+	var rooms []models.Room
+	for _, room := range r.memoryRooms {
+		if room.IsActive && codeSet[strings.ToUpper(room.RoomCode)] {
+			rooms = append(rooms, *room)
+		}
+	}
+	sort.Slice(rooms, func(i, j int) bool {
+		return rooms[i].CreatedAt.After(rooms[j].CreatedAt)
+	})
+	return rooms, nil
+}
+
+// Shutdown sets isActive to false for the given room
+func (r *RoomRepo) Shutdown(ctx context.Context, code string) error {
+	upper := strings.ToUpper(code)
+	now := time.Now()
+	if r.col != nil {
+		_, err := r.col.UpdateOne(ctx,
+			bson.M{"roomCode": upper},
+			bson.M{"$set": bson.M{
+				"isActive":  false,
+				"updatedAt": now,
+			}},
+		)
+		return err
+	}
+
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if room, ok := r.memoryRooms[upper]; ok {
+		room.IsActive = false
+		room.UpdatedAt = now
+		return nil
+	}
+	return mongo.ErrNoDocuments
 }
 
 // FindByCode retrieves a room by its code

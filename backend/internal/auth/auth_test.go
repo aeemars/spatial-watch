@@ -257,6 +257,48 @@ func TestDisplayNameValidation(t *testing.T) {
 	}
 }
 
+// 5b. Room name validation: boundaries, whitespace collapse, alphanumeric check
+func TestRoomNameValidation(t *testing.T) {
+	valid := []struct {
+		input    string
+		expected string
+	}{
+		{"Sci-Fi Night", "Sci-Fi Night"},
+		{"   Midnight Cinema   ", "Midnight Cinema"},
+		{"Space   Club   #4", "Space Club #4"},
+		{"Film & Discussion", "Film & Discussion"},
+		{"VR", "VR"},
+	}
+	for _, tc := range valid {
+		res, err := auth.ValidateRoomName(tc.input)
+		if err != nil {
+			t.Errorf("Expected %q to be valid, got err: %v", tc.input, err)
+		}
+		if res != tc.expected {
+			t.Errorf("Expected normalized %q, got %q", tc.expected, res)
+		}
+	}
+
+	invalid := []string{
+		"",
+		" ",
+		"a",                                    // too short (< 2)
+		"this room name is excessively long and completely exceeds fifty characters maximum length limit", // > 50
+		"<script>alert('hack')</script>",       // HTML tag
+		"Cinema <1>",                           // HTML brackets
+		"Room\nNewline",                        // Control char
+		"Room\tTab",                            // Control char
+		"---",                                  // no alphanumeric
+		"??? !!!",                              // no alphanumeric
+	}
+	for _, inv := range invalid {
+		_, err := auth.ValidateRoomName(inv)
+		if err == nil {
+			t.Errorf("Expected invalid room name %q to be rejected, but it passed", inv)
+		}
+	}
+}
+
 // 6. Profile update requires authentication and persists safely
 func TestProfileUpdate(t *testing.T) {
 	svc, userRepo, _ := setupTestAuthService()

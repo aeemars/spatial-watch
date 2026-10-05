@@ -2,6 +2,7 @@ package repository
 
 import (
 	"context"
+	"fmt"
 	"strings"
 	"sync"
 	"time"
@@ -36,9 +37,16 @@ func NewParticipantRepo(db *mongo.Database) *ParticipantRepo {
 		col.Indexes().CreateOne(ctx, mongo.IndexModel{
 			Keys: bson.D{{Key: "roomCode", Value: 1}},
 		})
-		// Non-unique index on participantId
+		// Index on participantId
 		col.Indexes().CreateOne(ctx, mongo.IndexModel{
 			Keys: bson.D{{Key: "participantId", Value: 1}},
+		})
+		// Compound index for user in room
+		col.Indexes().CreateOne(ctx, mongo.IndexModel{
+			Keys: bson.D{
+				{Key: "participantId", Value: 1},
+				{Key: "roomCode", Value: 1},
+			},
 		})
 		repo.col = col
 	}
@@ -49,16 +57,22 @@ func NewParticipantRepo(db *mongo.Database) *ParticipantRepo {
 func (r *ParticipantRepo) Create(ctx context.Context, p *models.Participant) error {
 	p.JoinedAt = time.Now()
 	p.LastSeenAt = time.Now()
+	p.RoomCode = strings.ToUpper(p.RoomCode)
+	p.HasLeft = false
 	if r.col != nil {
 		opts := options.UpdateOne().SetUpsert(true)
 		_, err := r.col.UpdateOne(ctx,
-			bson.M{"participantId": p.ParticipantID},
+			bson.M{
+				"participantId": p.ParticipantID,
+				"roomCode":      p.RoomCode,
+			},
 			bson.M{
 				"$set": bson.M{
 					"roomCode":    p.RoomCode,
 					"displayName": p.DisplayName,
 					"joinedAt":    p.JoinedAt,
 					"lastSeenAt":  p.LastSeenAt,
+					"hasLeft":     false,
 				},
 			},
 			opts,
@@ -68,14 +82,19 @@ func (r *ParticipantRepo) Create(ctx context.Context, p *models.Participant) err
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	copy := *p
-	r.participants[p.ParticipantID] = &copy
+	key := fmt.Sprintf("%s:%s", p.ParticipantID, p.RoomCode)
+	r.participants[key] = &copy
 	return nil
 }
 
-// FindByRoom retrieves all participants for a room
+// FindByRoom retrieves all active participants for a room
 func (r *ParticipantRepo) FindByRoom(ctx context.Context, roomCode string) ([]models.Participant, error) {
+	upper := strings.ToUpper(roomCode)
 	if r.col != nil {
-		cursor, err := r.col.Find(ctx, bson.M{"roomCode": roomCode})
+		cursor, err := r.col.Find(ctx, bson.M{
+			"roomCode": upper,
+			"hasLeft":  bson.M{"$ne": true},
+		})
 		if err != nil {
 			return nil, err
 		}
@@ -91,38 +110,104 @@ func (r *ParticipantRepo) FindByRoom(ctx context.Context, roomCode string) ([]mo
 	defer r.mu.RUnlock()
 	var participants []models.Participant
 	for _, p := range r.participants {
-		if strings.EqualFold(p.RoomCode, roomCode) {
+		if strings.EqualFold(p.RoomCode, upper) && !p.HasLeft {
 			participants = append(participants, *p)
 		}
 	}
 	return participants, nil
 }
 
-// UpdateLastSeen refreshes the last seen timestamp
-func (r *ParticipantRepo) UpdateLastSeen(ctx context.Context, participantID string) error {
+// FindByParticipantID retrieves all active room participation records for a user
+func (r *ParticipantRepo) FindByParticipantID(ctx context.Context, participantID string) ([]models.Participant, error) {
+	if r.col != nil {
+		opts := options.Find().SetSort(bson.D{{Key: "joinedAt", Value: -1}})
+		cursor, err := r.col.Find(ctx, bson.M{
+			"participantId": participantID,
+			"hasLeft":       bson.M{"$ne": true},
+		}, opts)
+		if err != nil {
+			return nil, err
+		}
+		defer cursor.Close(ctx)
+
+		var participants []models.Participant
+		if err := cursor.All(ctx, &participants); err != nil {
+			return nil, err
+		}
+		return participants, nil
+	}
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	var participants []models.Participant
+	for _, p := range r.participants {
+		if p.ParticipantID == participantID && !p.HasLeft {
+			participants = append(participants, *p)
+		}
+	}
+	return participants, nil
+}
+
+// Leave marks a participant as having left a room
+func (r *ParticipantRepo) Leave(ctx context.Context, roomCode string, participantID string) error {
+	upper := strings.ToUpper(roomCode)
+	now := time.Now()
 	if r.col != nil {
 		_, err := r.col.UpdateOne(ctx,
-			bson.M{"participantId": participantID},
-			bson.M{"$set": bson.M{"lastSeenAt": time.Now()}},
+			bson.M{
+				"participantId": participantID,
+				"roomCode":      upper,
+			},
+			bson.M{
+				"$set": bson.M{
+					"hasLeft":    true,
+					"lastSeenAt": now,
+				},
+			},
 		)
 		return err
 	}
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	if p, ok := r.participants[participantID]; ok {
-		p.LastSeenAt = time.Now()
+	key := fmt.Sprintf("%s:%s", participantID, upper)
+	if p, ok := r.participants[key]; ok {
+		p.HasLeft = true
+		p.LastSeenAt = now
 	}
 	return nil
 }
 
-// Remove deletes a participant
-func (r *ParticipantRepo) Remove(ctx context.Context, participantID string) error {
+// UpdateLastSeen refreshes the last seen timestamp
+func (r *ParticipantRepo) UpdateLastSeen(ctx context.Context, participantID string) error {
+	now := time.Now()
 	if r.col != nil {
-		_, err := r.col.DeleteOne(ctx, bson.M{"participantId": participantID})
+		_, err := r.col.UpdateMany(ctx,
+			bson.M{"participantId": participantID},
+			bson.M{"$set": bson.M{"lastSeenAt": now}},
+		)
 		return err
 	}
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	delete(r.participants, participantID)
+	for _, p := range r.participants {
+		if p.ParticipantID == participantID {
+			p.LastSeenAt = now
+		}
+	}
+	return nil
+}
+
+// Remove deletes participant records by participantID
+func (r *ParticipantRepo) Remove(ctx context.Context, participantID string) error {
+	if r.col != nil {
+		_, err := r.col.DeleteMany(ctx, bson.M{"participantId": participantID})
+		return err
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	for k, p := range r.participants {
+		if p.ParticipantID == participantID {
+			delete(r.participants, k)
+		}
+	}
 	return nil
 }

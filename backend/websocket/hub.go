@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"log"
+	"strings"
 	"sync"
 	"time"
 
@@ -235,6 +236,7 @@ func (h *Hub) handleRequestSync(client *Client) {
 
 	syncPayload := models.RoomStatePayload{
 		RoomCode:           room.RoomCode,
+		Name:               room.Name,
 		MediaURL:           room.MediaURL,
 		IsPaused:           room.IsPaused,
 		Position:           room.PlaybackPositionSeconds,
@@ -249,6 +251,35 @@ func (h *Hub) handleRequestSync(client *Client) {
 		Payload:    syncPayload,
 		ServerTime: time.Now().UnixMilli(),
 	})
+}
+
+// CloseRoom terminates all connections in a room with a shutdown event
+func (h *Hub) CloseRoom(roomCode string, reason string) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+
+	upper := strings.ToUpper(roomCode)
+	clients, ok := h.rooms[upper]
+	if !ok {
+		return
+	}
+
+	event := &models.WSEvent{
+		Type:       "room_shutdown",
+		Payload:    map[string]string{"reason": reason, "roomCode": upper},
+		ServerTime: time.Now().UnixMilli(),
+	}
+	msg := mustJSON(event)
+
+	for client := range clients {
+		select {
+		case client.Send <- msg:
+		default:
+		}
+		close(client.Send)
+	}
+	delete(h.rooms, upper)
+	log.Printf("[ws] room %s shut down: %s", upper, reason)
 }
 
 // BroadcastToRoom sends a message to all clients in a room

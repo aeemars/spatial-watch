@@ -57,8 +57,11 @@ func setupTestRig() *testRig {
 	protected := api.PathPrefix("").Subrouter()
 	protected.Use(auth.Middleware(authService))
 	protected.HandleFunc("/auth/profile", h.UpdateProfile).Methods("PATCH")
+	protected.HandleFunc("/user/rooms", h.GetUserRooms).Methods("GET")
 	protected.HandleFunc("/rooms", h.CreateRoom).Methods("POST")
 	protected.HandleFunc("/rooms/join", h.JoinRoom).Methods("POST")
+	protected.HandleFunc("/rooms/{roomCode}", h.ShutdownRoom).Methods("DELETE")
+	protected.HandleFunc("/rooms/{roomCode}/leave", h.LeaveRoom).Methods("POST")
 
 	// Public room endpoints
 	api.HandleFunc("/rooms/{roomCode}", h.GetRoom).Methods("GET")
@@ -157,6 +160,7 @@ func TestAuthenticatedCreateAndJoinRoom(t *testing.T) {
 
 	// 2. Host creates room
 	createBody, _ := json.Marshal(models.CreateRoomRequest{
+		RoomName:    "Alice's Cinema",
 		DisplayName: "Host Alice",
 	})
 	reqCreate, _ := http.NewRequest("POST", "/api/rooms", bytes.NewBuffer(createBody))
@@ -273,7 +277,10 @@ func TestWebSocketAuthentication(t *testing.T) {
 
 	// 1. Create a room first
 	hostUser, hostCookie := createTestGuestSession(t, rig)
-	createBody, _ := json.Marshal(models.CreateRoomRequest{DisplayName: "WS Host"})
+	createBody, _ := json.Marshal(models.CreateRoomRequest{
+		RoomName:    "WS Screening",
+		DisplayName: "WS Host",
+	})
 	reqCreate, _ := http.NewRequest("POST", server.URL+"/api/rooms", bytes.NewBuffer(createBody))
 	reqCreate.Header.Set("Content-Type", "application/json")
 	reqCreate.AddCookie(hostCookie)
@@ -313,4 +320,299 @@ func TestWebSocketAuthentication(t *testing.T) {
 	}
 
 	_ = hostUser
+}
+
+// Enforces room name uniqueness across active rooms (case-insensitive)
+func TestRoomNameDuplicationCheck(t *testing.T) {
+	rig := setupTestRig()
+
+	_, cookie1 := createTestGuestSession(t, rig)
+	_, cookie2 := createTestGuestSession(t, rig)
+
+	// 1. Create first room with name "Cosmic Cinema"
+	body1, _ := json.Marshal(models.CreateRoomRequest{
+		RoomName:    "Cosmic Cinema",
+		DisplayName: "Host One",
+	})
+	req1, _ := http.NewRequest("POST", "/api/rooms", bytes.NewBuffer(body1))
+	req1.Header.Set("Content-Type", "application/json")
+	req1.AddCookie(cookie1)
+	rr1 := httptest.NewRecorder()
+	rig.Router.ServeHTTP(rr1, req1)
+
+	if rr1.Code != http.StatusCreated {
+		t.Fatalf("Expected 201 Created for first room, got %d: %s", rr1.Code, rr1.Body.String())
+	}
+
+	// 2. Attempt to create another room with the exact same name (even case-differed)
+	body2, _ := json.Marshal(models.CreateRoomRequest{
+		RoomName:    "  cosmic cinema  ",
+		DisplayName: "Host Two",
+	})
+	req2, _ := http.NewRequest("POST", "/api/rooms", bytes.NewBuffer(body2))
+	req2.Header.Set("Content-Type", "application/json")
+	req2.AddCookie(cookie2)
+	rr2 := httptest.NewRecorder()
+	rig.Router.ServeHTTP(rr2, req2)
+
+	if rr2.Code != http.StatusConflict {
+		t.Fatalf("Expected 409 Conflict for duplicate room name, got %d: %s", rr2.Code, rr2.Body.String())
+	}
+
+	// 3. Create room with a unique name should succeed
+	body3, _ := json.Marshal(models.CreateRoomRequest{
+		RoomName:    "Solar Cinema",
+		DisplayName: "Host Two",
+	})
+	req3, _ := http.NewRequest("POST", "/api/rooms", bytes.NewBuffer(body3))
+	req3.Header.Set("Content-Type", "application/json")
+	req3.AddCookie(cookie2)
+	rr3 := httptest.NewRecorder()
+	rig.Router.ServeHTTP(rr3, req3)
+
+	if rr3.Code != http.StatusCreated {
+		t.Fatalf("Expected 201 Created for unique room name, got %d: %s", rr3.Code, rr3.Body.String())
+	}
+}
+
+// User can view all created and joined rooms with continued access
+func TestUserRoomsRecordsAndContinuedAccess(t *testing.T) {
+	rig := setupTestRig()
+
+	_, hostCookie := createTestGuestSession(t, rig)
+	_, guestCookie := createTestGuestSession(t, rig)
+
+	// 1. Host creates Room A
+	bodyA, _ := json.Marshal(models.CreateRoomRequest{
+		RoomName:    "Alpha Screening",
+		DisplayName: "Host User",
+	})
+	reqA, _ := http.NewRequest("POST", "/api/rooms", bytes.NewBuffer(bodyA))
+	reqA.Header.Set("Content-Type", "application/json")
+	reqA.AddCookie(hostCookie)
+	rrA := httptest.NewRecorder()
+	rig.Router.ServeHTTP(rrA, reqA)
+
+	var respA models.CreateRoomResponse
+	json.Unmarshal(rrA.Body.Bytes(), &respA)
+
+	// 2. Guest joins Room A
+	joinBody, _ := json.Marshal(models.JoinRoomRequest{
+		RoomCode:    respA.RoomCode,
+		DisplayName: "Guest User",
+	})
+	reqJoin, _ := http.NewRequest("POST", "/api/rooms/join", bytes.NewBuffer(joinBody))
+	reqJoin.Header.Set("Content-Type", "application/json")
+	reqJoin.AddCookie(guestCookie)
+	rrJoin := httptest.NewRecorder()
+	rig.Router.ServeHTTP(rrJoin, reqJoin)
+
+	if rrJoin.Code != http.StatusOK {
+		t.Fatalf("Guest join room failed: %d", rrJoin.Code)
+	}
+
+	// 3. Guest creates their own Room B
+	bodyB, _ := json.Marshal(models.CreateRoomRequest{
+		RoomName:    "Beta Screening",
+		DisplayName: "Guest User",
+	})
+	reqB, _ := http.NewRequest("POST", "/api/rooms", bytes.NewBuffer(bodyB))
+	reqB.Header.Set("Content-Type", "application/json")
+	reqB.AddCookie(guestCookie)
+	rrB := httptest.NewRecorder()
+	rig.Router.ServeHTTP(rrB, reqB)
+
+	// 4. Query guest's user rooms records: should have 1 created room (Beta) and 1 joined room (Alpha)
+	reqRecords, _ := http.NewRequest("GET", "/api/user/rooms", nil)
+	reqRecords.AddCookie(guestCookie)
+	rrRecords := httptest.NewRecorder()
+	rig.Router.ServeHTTP(rrRecords, reqRecords)
+
+	if rrRecords.Code != http.StatusOK {
+		t.Fatalf("Expected 200 OK for /api/user/rooms, got %d: %s", rrRecords.Code, rrRecords.Body.String())
+	}
+
+	var userRooms models.UserRoomsResponse
+	if err := json.Unmarshal(rrRecords.Body.Bytes(), &userRooms); err != nil {
+		t.Fatalf("Failed to decode user rooms response: %v", err)
+	}
+
+	if len(userRooms.CreatedRooms) != 1 {
+		t.Fatalf("Expected 1 created room for guest, got %d", len(userRooms.CreatedRooms))
+	}
+	if userRooms.CreatedRooms[0].Name != "Beta Screening" {
+		t.Errorf("Expected created room 'Beta Screening', got %s", userRooms.CreatedRooms[0].Name)
+	}
+
+	if len(userRooms.JoinedRooms) != 1 {
+		t.Fatalf("Expected 1 joined room for guest, got %d", len(userRooms.JoinedRooms))
+	}
+	if userRooms.JoinedRooms[0].RoomCode != respA.RoomCode {
+		t.Errorf("Expected joined room %s, got %s", respA.RoomCode, userRooms.JoinedRooms[0].RoomCode)
+	}
+	if userRooms.JoinedRooms[0].Name != "Alpha Screening" {
+		t.Errorf("Expected joined room name 'Alpha Screening', got %s", userRooms.JoinedRooms[0].Name)
+	}
+
+	// 5. Query host's user rooms records: should have 1 created room (Alpha) and 0 joined rooms
+	reqHostRecords, _ := http.NewRequest("GET", "/api/user/rooms", nil)
+	reqHostRecords.AddCookie(hostCookie)
+	rrHostRecords := httptest.NewRecorder()
+	rig.Router.ServeHTTP(rrHostRecords, reqHostRecords)
+
+	var hostRooms models.UserRoomsResponse
+	json.Unmarshal(rrHostRecords.Body.Bytes(), &hostRooms)
+
+	if len(hostRooms.CreatedRooms) != 1 || hostRooms.CreatedRooms[0].RoomCode != respA.RoomCode {
+		t.Fatalf("Expected 1 created room for host, got %d", len(hostRooms.CreatedRooms))
+	}
+	if len(hostRooms.JoinedRooms) != 0 {
+		t.Fatalf("Expected 0 joined rooms for host, got %d", len(hostRooms.JoinedRooms))
+	}
+}
+
+// Guest can leave a joined room, removing it from their active joined records
+func TestGuestLeaveRoom(t *testing.T) {
+	rig := setupTestRig()
+
+	_, hostCookie := createTestGuestSession(t, rig)
+	_, guestCookie := createTestGuestSession(t, rig)
+
+	// Create room
+	body, _ := json.Marshal(models.CreateRoomRequest{
+		RoomName:    "Gamma Screening",
+		DisplayName: "Host",
+	})
+	req, _ := http.NewRequest("POST", "/api/rooms", bytes.NewBuffer(body))
+	req.Header.Set("Content-Type", "application/json")
+	req.AddCookie(hostCookie)
+	rr := httptest.NewRecorder()
+	rig.Router.ServeHTTP(rr, req)
+
+	var createResp models.CreateRoomResponse
+	json.Unmarshal(rr.Body.Bytes(), &createResp)
+
+	// Guest joins
+	joinBody, _ := json.Marshal(models.JoinRoomRequest{
+		RoomCode:    createResp.RoomCode,
+		DisplayName: "Guest",
+	})
+	reqJoin, _ := http.NewRequest("POST", "/api/rooms/join", bytes.NewBuffer(joinBody))
+	reqJoin.Header.Set("Content-Type", "application/json")
+	reqJoin.AddCookie(guestCookie)
+	rrJoin := httptest.NewRecorder()
+	rig.Router.ServeHTTP(rrJoin, reqJoin)
+
+	// Verify room appears in guest's joined records
+	reqRec1, _ := http.NewRequest("GET", "/api/user/rooms", nil)
+	reqRec1.AddCookie(guestCookie)
+	rrRec1 := httptest.NewRecorder()
+	rig.Router.ServeHTTP(rrRec1, reqRec1)
+	var rec1 models.UserRoomsResponse
+	json.Unmarshal(rrRec1.Body.Bytes(), &rec1)
+	if len(rec1.JoinedRooms) != 1 {
+		t.Fatalf("Expected 1 joined room before leaving, got %d", len(rec1.JoinedRooms))
+	}
+
+	// Guest leaves room
+	reqLeave, _ := http.NewRequest("POST", "/api/rooms/"+createResp.RoomCode+"/leave", nil)
+	reqLeave.AddCookie(guestCookie)
+	rrLeave := httptest.NewRecorder()
+	rig.Router.ServeHTTP(rrLeave, reqLeave)
+
+	if rrLeave.Code != http.StatusOK {
+		t.Fatalf("Expected 200 OK for leave room, got %d: %s", rrLeave.Code, rrLeave.Body.String())
+	}
+
+	// Verify room NO LONGER appears in guest's joined records
+	reqRec2, _ := http.NewRequest("GET", "/api/user/rooms", nil)
+	reqRec2.AddCookie(guestCookie)
+	rrRec2 := httptest.NewRecorder()
+	rig.Router.ServeHTTP(rrRec2, reqRec2)
+	var rec2 models.UserRoomsResponse
+	json.Unmarshal(rrRec2.Body.Bytes(), &rec2)
+	if len(rec2.JoinedRooms) != 0 {
+		t.Fatalf("Expected 0 joined rooms after leaving, got %d", len(rec2.JoinedRooms))
+	}
+}
+
+// Host can shut down / delete room, preventing further access and removing from records
+func TestHostShutdownRoom(t *testing.T) {
+	rig := setupTestRig()
+
+	_, hostCookie := createTestGuestSession(t, rig)
+	_, guestCookie := createTestGuestSession(t, rig)
+
+	// Host creates room
+	body, _ := json.Marshal(models.CreateRoomRequest{
+		RoomName:    "Delta Screening",
+		DisplayName: "Host",
+	})
+	req, _ := http.NewRequest("POST", "/api/rooms", bytes.NewBuffer(body))
+	req.Header.Set("Content-Type", "application/json")
+	req.AddCookie(hostCookie)
+	rr := httptest.NewRecorder()
+	rig.Router.ServeHTTP(rr, req)
+
+	var createResp models.CreateRoomResponse
+	json.Unmarshal(rr.Body.Bytes(), &createResp)
+
+	// Guest joins
+	joinBody, _ := json.Marshal(models.JoinRoomRequest{
+		RoomCode:    createResp.RoomCode,
+		DisplayName: "Guest",
+	})
+	reqJoin, _ := http.NewRequest("POST", "/api/rooms/join", bytes.NewBuffer(joinBody))
+	reqJoin.Header.Set("Content-Type", "application/json")
+	reqJoin.AddCookie(guestCookie)
+	rrJoin := httptest.NewRecorder()
+	rig.Router.ServeHTTP(rrJoin, reqJoin)
+
+	// Non-host attempts to shut down room -> 403 Forbidden
+	reqShutdownGuest, _ := http.NewRequest("DELETE", "/api/rooms/"+createResp.RoomCode, nil)
+	reqShutdownGuest.AddCookie(guestCookie)
+	rrShutdownGuest := httptest.NewRecorder()
+	rig.Router.ServeHTTP(rrShutdownGuest, reqShutdownGuest)
+	if rrShutdownGuest.Code != http.StatusForbidden {
+		t.Fatalf("Expected 403 Forbidden when non-host deletes room, got %d", rrShutdownGuest.Code)
+	}
+
+	// Host shuts down room -> 200 OK
+	reqShutdown, _ := http.NewRequest("DELETE", "/api/rooms/"+createResp.RoomCode, nil)
+	reqShutdown.AddCookie(hostCookie)
+	rrShutdown := httptest.NewRecorder()
+	rig.Router.ServeHTTP(rrShutdown, reqShutdown)
+	if rrShutdown.Code != http.StatusOK {
+		t.Fatalf("Expected 200 OK when host shuts down room, got %d: %s", rrShutdown.Code, rrShutdown.Body.String())
+	}
+
+	// GetRoom on shutdown room returns 404
+	reqGet, _ := http.NewRequest("GET", "/api/rooms/"+createResp.RoomCode, nil)
+	rrGet := httptest.NewRecorder()
+	rig.Router.ServeHTTP(rrGet, reqGet)
+	if rrGet.Code != http.StatusNotFound {
+		t.Fatalf("Expected 404 Not Found for shut down room, got %d", rrGet.Code)
+	}
+
+	// Host records show 0 created rooms
+	reqHostRec, _ := http.NewRequest("GET", "/api/user/rooms", nil)
+	reqHostRec.AddCookie(hostCookie)
+	rrHostRec := httptest.NewRecorder()
+	rig.Router.ServeHTTP(rrHostRec, reqHostRec)
+	var hostRec models.UserRoomsResponse
+	json.Unmarshal(rrHostRec.Body.Bytes(), &hostRec)
+	if len(hostRec.CreatedRooms) != 0 {
+		t.Fatalf("Expected 0 created rooms after shutdown, got %d", len(hostRec.CreatedRooms))
+	}
+
+	// Guest records show 0 joined rooms
+	reqGuestRec, _ := http.NewRequest("GET", "/api/user/rooms", nil)
+	reqGuestRec.AddCookie(guestCookie)
+	rrGuestRec := httptest.NewRecorder()
+	rig.Router.ServeHTTP(rrGuestRec, reqGuestRec)
+	var guestRec models.UserRoomsResponse
+	json.Unmarshal(rrGuestRec.Body.Bytes(), &guestRec)
+	if len(guestRec.JoinedRooms) != 0 {
+		t.Fatalf("Expected 0 joined rooms for guest after room shutdown, got %d", len(guestRec.JoinedRooms))
+	}
 }

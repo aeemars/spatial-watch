@@ -105,8 +105,11 @@ func main() {
 	protected := api.PathPrefix("").Subrouter()
 	protected.Use(auth.Middleware(authService))
 	protected.HandleFunc("/auth/profile", handler.UpdateProfile).Methods("PATCH", "OPTIONS")
+	protected.HandleFunc("/user/rooms", handler.GetUserRooms).Methods("GET", "OPTIONS")
 	protected.HandleFunc("/rooms", handler.CreateRoom).Methods("POST", "OPTIONS")
 	protected.HandleFunc("/rooms/join", handler.JoinRoom).Methods("POST", "OPTIONS")
+	protected.HandleFunc("/rooms/{roomCode}", handler.ShutdownRoom).Methods("DELETE", "OPTIONS")
+	protected.HandleFunc("/rooms/{roomCode}/leave", handler.LeaveRoom).Methods("POST", "OPTIONS")
 
 	// Public room info and commentary
 	api.HandleFunc("/rooms/{roomCode}", handler.GetRoom).Methods("GET", "OPTIONS")

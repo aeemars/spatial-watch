@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"log"
 	"net/http"
 	"strings"
@@ -144,6 +145,18 @@ func (h *Handler) CreateRoom(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Validate room name
+	roomName := strings.TrimSpace(req.RoomName)
+	if roomName == "" {
+		respondError(w, http.StatusBadRequest, "Room name is required (2-50 characters)")
+		return
+	}
+	validRoomName, err := auth.ValidateRoomName(roomName)
+	if err != nil {
+		respondError(w, http.StatusBadRequest, "Room name must be 2-50 characters without control characters or HTML")
+		return
+	}
+
 	displayName := authUser.DisplayName
 	if trimmed := strings.TrimSpace(req.DisplayName); trimmed != "" {
 		validName, err := auth.ValidateDisplayName(trimmed)
@@ -155,6 +168,21 @@ func (h *Handler) CreateRoom(w http.ResponseWriter, r *http.Request) {
 		if displayName != authUser.DisplayName && h.AuthService != nil {
 			_, _ = h.AuthService.UpdateProfile(r.Context(), authUser.ID, displayName)
 		}
+	}
+
+	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
+	defer cancel()
+
+	// Enforce active room name uniqueness (dispels duplicate room names)
+	exists, err := h.RoomRepo.ExistsActiveByName(ctx, validRoomName)
+	if err != nil {
+		log.Printf("[api] failed to check room name uniqueness: %v", err)
+		respondError(w, http.StatusInternalServerError, "Failed to create room")
+		return
+	}
+	if exists {
+		respondError(w, http.StatusConflict, fmt.Sprintf("A room named %q is already active. Please choose a unique name.", validRoomName))
+		return
 	}
 
 	roomCode, err := repository.GenerateRoomCode()
@@ -172,11 +200,10 @@ func (h *Handler) CreateRoom(w http.ResponseWriter, r *http.Request) {
 		mediaURL = "https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/BigBuckBunny.mp4"
 	}
 
-	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
-	defer cancel()
-
 	room := &models.Room{
 		RoomCode:                roomCode,
+		Name:                    validRoomName,
+		IsActive:                true,
 		HostParticipantID:       participantID,
 		MediaURL:                mediaURL,
 		PlaybackPositionSeconds: 0,
@@ -200,10 +227,11 @@ func (h *Handler) CreateRoom(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	log.Printf("[api] room %s created by %s (%s)", roomCode, displayName, participantID)
+	log.Printf("[api] room %s (%s) created by %s (%s)", roomCode, validRoomName, displayName, participantID)
 
 	respondJSON(w, http.StatusCreated, models.CreateRoomResponse{
 		RoomCode:      roomCode,
+		Name:          validRoomName,
 		ParticipantID: participantID,
 		IsHost:        true,
 	})
@@ -247,8 +275,8 @@ func (h *Handler) JoinRoom(w http.ResponseWriter, r *http.Request) {
 	defer cancel()
 
 	room, err := h.RoomRepo.FindByCode(ctx, roomCode)
-	if err != nil {
-		respondError(w, http.StatusNotFound, "Room not found")
+	if err != nil || !room.IsActive {
+		respondError(w, http.StatusNotFound, "Room not found or is no longer active")
 		return
 	}
 
@@ -265,10 +293,11 @@ func (h *Handler) JoinRoom(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	log.Printf("[api] %s (%s) joined room %s", displayName, participantID, roomCode)
+	log.Printf("[api] %s (%s) joined room %s (%s)", displayName, participantID, roomCode, room.Name)
 
 	respondJSON(w, http.StatusOK, models.JoinRoomResponse{
 		RoomCode:      roomCode,
+		Name:          room.Name,
 		ParticipantID: participantID,
 		IsHost:        room.HostParticipantID == participantID,
 	})
@@ -283,8 +312,8 @@ func (h *Handler) GetRoom(w http.ResponseWriter, r *http.Request) {
 	defer cancel()
 
 	room, err := h.RoomRepo.FindByCode(ctx, roomCode)
-	if err != nil {
-		respondError(w, http.StatusNotFound, "Room not found")
+	if err != nil || !room.IsActive {
+		respondError(w, http.StatusNotFound, "Room not found or is no longer active")
 		return
 	}
 
@@ -295,6 +324,193 @@ func (h *Handler) GetRoom(w http.ResponseWriter, r *http.Request) {
 		"participants": participants,
 		"activeCount":  h.Hub.GetRoomParticipantCount(roomCode),
 	})
+}
+
+// GetUserRooms handles GET /api/user/rooms (Protected by auth middleware)
+// Returns active rooms created by the user and active rooms joined by the user for continued access
+func (h *Handler) GetUserRooms(w http.ResponseWriter, r *http.Request) {
+	authUser, ok := auth.GetAuthenticatedUser(r.Context())
+	if !ok {
+		respondError(w, http.StatusUnauthorized, "Unauthorized")
+		return
+	}
+
+	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
+	defer cancel()
+
+	// 1. Fetch active rooms created by user
+	createdRooms, err := h.RoomRepo.FindByHost(ctx, authUser.ID)
+	if err != nil {
+		log.Printf("[api] failed to fetch created rooms: %v", err)
+		respondError(w, http.StatusInternalServerError, "Failed to fetch room records")
+		return
+	}
+
+	createdRecords := make([]models.UserRoomRecord, 0, len(createdRooms))
+	createdCodes := make(map[string]bool, len(createdRooms))
+	for _, room := range createdRooms {
+		createdCodes[room.RoomCode] = true
+		parts, _ := h.PartRepo.FindByRoom(ctx, room.RoomCode)
+		createdRecords = append(createdRecords, models.UserRoomRecord{
+			RoomCode:          room.RoomCode,
+			Name:              room.Name,
+			HostDisplayName:   authUser.DisplayName,
+			HostParticipantID: room.HostParticipantID,
+			MediaURL:          room.MediaURL,
+			MediaTitle:        formatMediaTitle(room.MediaURL),
+			ParticipantCount:  len(parts),
+			CreatedAt:         room.CreatedAt,
+			IsHost:            true,
+			IsActive:          room.IsActive,
+		})
+	}
+
+	// 2. Fetch participation records for joined rooms
+	participations, err := h.PartRepo.FindByParticipantID(ctx, authUser.ID)
+	if err != nil {
+		log.Printf("[api] failed to fetch user participations: %v", err)
+		respondError(w, http.StatusInternalServerError, "Failed to fetch room records")
+		return
+	}
+
+	// Filter out rooms that user created or has left
+	var joinedCodes []string
+	joinedAtMap := make(map[string]time.Time)
+	for _, p := range participations {
+		if !createdCodes[p.RoomCode] && !p.HasLeft {
+			joinedCodes = append(joinedCodes, p.RoomCode)
+			joinedAtMap[p.RoomCode] = p.JoinedAt
+		}
+	}
+
+	// 3. Fetch active room entities for joined codes
+	joinedRooms, err := h.RoomRepo.FindActiveByCodes(ctx, joinedCodes)
+	if err != nil {
+		log.Printf("[api] failed to fetch joined room entities: %v", err)
+		respondError(w, http.StatusInternalServerError, "Failed to fetch room records")
+		return
+	}
+
+	joinedRecords := make([]models.UserRoomRecord, 0, len(joinedRooms))
+	for _, room := range joinedRooms {
+		parts, _ := h.PartRepo.FindByRoom(ctx, room.RoomCode)
+		hostName := "Host"
+		for _, part := range parts {
+			if part.ParticipantID == room.HostParticipantID {
+				hostName = part.DisplayName
+				break
+			}
+		}
+
+		joinedRecords = append(joinedRecords, models.UserRoomRecord{
+			RoomCode:          room.RoomCode,
+			Name:              room.Name,
+			HostDisplayName:   hostName,
+			HostParticipantID: room.HostParticipantID,
+			MediaURL:          room.MediaURL,
+			MediaTitle:        formatMediaTitle(room.MediaURL),
+			ParticipantCount:  len(parts),
+			CreatedAt:         room.CreatedAt,
+			JoinedAt:          joinedAtMap[room.RoomCode],
+			IsHost:            false,
+			IsActive:          room.IsActive,
+		})
+	}
+
+	respondJSON(w, http.StatusOK, models.UserRoomsResponse{
+		CreatedRooms: createdRecords,
+		JoinedRooms:  joinedRecords,
+	})
+}
+
+// ShutdownRoom handles DELETE /api/rooms/{roomCode} (Protected by auth middleware)
+// Only the host can shut down the room, which terminates connections and removes it from active records
+func (h *Handler) ShutdownRoom(w http.ResponseWriter, r *http.Request) {
+	authUser, ok := auth.GetAuthenticatedUser(r.Context())
+	if !ok {
+		respondError(w, http.StatusUnauthorized, "Unauthorized")
+		return
+	}
+
+	vars := mux.Vars(r)
+	roomCode := strings.ToUpper(vars["roomCode"])
+
+	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
+	defer cancel()
+
+	room, err := h.RoomRepo.FindByCode(ctx, roomCode)
+	if err != nil {
+		respondError(w, http.StatusNotFound, "Room not found")
+		return
+	}
+
+	if room.HostParticipantID != authUser.ID {
+		respondError(w, http.StatusForbidden, "Only the host can shut down this room")
+		return
+	}
+
+	if err := h.RoomRepo.Shutdown(ctx, roomCode); err != nil {
+		log.Printf("[api] failed to shutdown room %s: %v", roomCode, err)
+		respondError(w, http.StatusInternalServerError, "Failed to shutdown room")
+		return
+	}
+
+	// Close WS connections and broadcast room_shutdown
+	h.Hub.CloseRoom(roomCode, "This room was shut down by the host.")
+
+	log.Printf("[api] room %s shut down by host %s", roomCode, authUser.ID)
+	respondJSON(w, http.StatusOK, map[string]string{
+		"status":   "shutdown",
+		"roomCode": roomCode,
+	})
+}
+
+// LeaveRoom handles POST /api/rooms/{roomCode}/leave (Protected by auth middleware)
+// Marks the participant as having left the room so it no longer appears in joined records
+func (h *Handler) LeaveRoom(w http.ResponseWriter, r *http.Request) {
+	authUser, ok := auth.GetAuthenticatedUser(r.Context())
+	if !ok {
+		respondError(w, http.StatusUnauthorized, "Unauthorized")
+		return
+	}
+
+	vars := mux.Vars(r)
+	roomCode := strings.ToUpper(vars["roomCode"])
+
+	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
+	defer cancel()
+
+	if err := h.PartRepo.Leave(ctx, roomCode, authUser.ID); err != nil {
+		log.Printf("[api] failed to record participant leave %s: %v", roomCode, err)
+		respondError(w, http.StatusInternalServerError, "Failed to leave room")
+		return
+	}
+
+	log.Printf("[api] participant %s left room %s", authUser.ID, roomCode)
+	respondJSON(w, http.StatusOK, map[string]string{
+		"status":   "left",
+		"roomCode": roomCode,
+	})
+}
+
+func formatMediaTitle(urlStr string) string {
+	if urlStr == "" {
+		return "Feature Film"
+	}
+	parts := strings.Split(urlStr, "/")
+	filename := parts[len(parts)-1]
+	if qIdx := strings.Index(filename, "?"); qIdx != -1 {
+		filename = filename[:qIdx]
+	}
+	if dotIdx := strings.LastIndex(filename, "."); dotIdx != -1 {
+		filename = filename[:dotIdx]
+	}
+	cleaned := strings.ReplaceAll(strings.ReplaceAll(filename, "-", " "), "_", " ")
+	cleaned = strings.TrimSpace(cleaned)
+	if cleaned == "" {
+		return "Feature Film"
+	}
+	return cleaned
 }
 
 // GetCommentary handles GET /api/rooms/{roomCode}/commentary
@@ -342,9 +558,9 @@ func (h *Handler) HandleWebSocket(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
 	defer cancel()
 
-	_, err = h.RoomRepo.FindByCode(ctx, roomCode)
-	if err != nil {
-		http.Error(w, "Room not found", http.StatusNotFound)
+	room, err := h.RoomRepo.FindByCode(ctx, roomCode)
+	if err != nil || !room.IsActive {
+		http.Error(w, "Room not found or is no longer active", http.StatusNotFound)
 		return
 	}
 

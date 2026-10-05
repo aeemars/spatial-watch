@@ -14,6 +14,7 @@ import (
 
 var (
 	ErrInvalidDisplayName = errors.New("display name must be 2-32 characters without control characters or HTML")
+	ErrInvalidRoomName    = errors.New("room name must be 2-50 characters without control characters or HTML")
 )
 
 // GenerateToken generates a cryptographically secure, opaque random session token
@@ -94,4 +95,47 @@ func ValidateDisplayName(raw string) (string, error) {
 	}
 
 	return trimmed, nil
+}
+
+// ValidateRoomName ensures a room name meets consistency and safety requirements:
+// - Trimmed whitespace and collapsed multiple spaces
+// - 2 to 50 characters
+// - At least one letter or digit
+// - No control characters
+// - No unsafe HTML characters (< or >)
+func ValidateRoomName(raw string) (string, error) {
+	trimmed := strings.TrimSpace(raw)
+	if trimmed == "" {
+		return "", ErrInvalidRoomName
+	}
+
+	// Reject control characters or HTML brackets
+	for _, r := range trimmed {
+		if unicode.IsControl(r) || r == '<' || r == '>' {
+			return "", ErrInvalidRoomName
+		}
+	}
+
+	// Normalize multiple whitespace to single space
+	parts := strings.Fields(trimmed)
+	normalized := strings.Join(parts, " ")
+
+	runes := []rune(normalized)
+	if len(runes) < 2 || len(runes) > 50 {
+		return "", ErrInvalidRoomName
+	}
+
+	hasAlphanumeric := false
+	for _, r := range runes {
+		if unicode.IsLetter(r) || unicode.IsDigit(r) {
+			hasAlphanumeric = true
+			break
+		}
+	}
+
+	if !hasAlphanumeric {
+		return "", ErrInvalidRoomName
+	}
+
+	return normalized, nil
 }

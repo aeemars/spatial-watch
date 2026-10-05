@@ -1015,3 +1015,200 @@
 .text--danger {
   color: #EF4444 !important;
 }
+
+/* ────────────────────────────────────────────────────────
+   ROOM RECORDS & CONTINUED ACCESS
+   ──────────────────────────────────────────────────────── */
+
+.modal--records {
+  max-width: 620px;
+  width: 100%;
+}
+
+.modal__body--records {
+  max-height: 56vh;
+  overflow-y: auto;
+  padding-right: var(--space-2);
+}
+
+.records-tabs {
+  display: flex;
+  background: var(--surface-2);
+  border-radius: var(--radius-lg);
+  padding: 4px;
+  gap: 4px;
+  margin-bottom: var(--space-5);
+  border: 1px solid var(--border-subtle);
+}
+
+.records-tab {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-2);
+  padding: var(--space-2) var(--space-3);
+  font-size: var(--text-sm);
+  font-weight: var(--weight-medium);
+  color: var(--text-secondary);
+  border-radius: var(--radius-md);
+  border: none;
+  background: transparent;
+  cursor: pointer;
+  transition: all var(--duration-fast) var(--ease-out);
+}
+
+.records-tab:hover {
+  color: var(--text-primary);
+  background: rgba(255, 255, 255, 0.04);
+}
+
+.records-tab.is-active {
+  background: var(--surface-3);
+  color: var(--gold);
+  font-weight: var(--weight-semi);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.3);
+}
+
+.records-tab__badge {
+  font-size: 11px;
+  padding: 1px 7px;
+  min-width: 18px;
+  height: 18px;
+}
+
+.records-list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+
+.record-card {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  padding: var(--space-4) var(--space-5);
+  background: var(--surface-1);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-lg);
+  transition: border-color var(--duration-fast) var(--ease-out), transform var(--duration-fast) var(--ease-out);
+}
+
+.record-card:hover {
+  border-color: rgba(231, 188, 114, 0.3);
+  transform: translateY(-1px);
+}
+
+.record-card__header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--space-3);
+}
+
+.record-card__title-group {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.record-card__title {
+  font-family: var(--font-display);
+  font-size: var(--text-base);
+  font-weight: var(--weight-semi);
+  color: var(--text-primary);
+  letter-spacing: var(--tracking-tight);
+}
+
+.record-card__sub {
+  font-size: var(--text-xs);
+  color: var(--text-tertiary);
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.record-card__body {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  font-size: var(--text-xs);
+  color: var(--text-secondary);
+  border-top: 1px solid rgba(255, 255, 255, 0.05);
+  padding-top: var(--space-3);
+}
+
+.record-card__media {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.record-card__actions {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  flex-shrink: 0;
+}
+
+.records-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  text-align: center;
+  padding: var(--space-8) var(--space-4);
+  gap: var(--space-3);
+}
+
+.records-empty__icon {
+  font-size: 36px;
+  line-height: 1;
+}
+
+.records-empty__title {
+  font-family: var(--font-display);
+  font-size: var(--text-lg);
+  font-weight: var(--weight-medium);
+  color: var(--text-primary);
+}
+
+.records-empty__text {
+  font-size: var(--text-sm);
+  color: var(--text-secondary);
+  max-width: 320px;
+  line-height: var(--leading-normal);
+  margin-bottom: var(--space-2);
+}
+
+.records-loading {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-3);
+  padding: var(--space-8);
+  color: var(--text-secondary);
+  font-size: var(--text-sm);
+}
+
+.btn--danger-ghost {
+  color: var(--danger);
+}
+
+.btn--danger-ghost:hover {
+  background: rgba(224, 86, 96, 0.15);
+  color: #ff6b77;
+}
+
+.btn--records {
+  border-color: rgba(231, 188, 114, 0.25);
+  color: var(--gold);
+}
+
+.btn--records:hover {
+  background: var(--gold-bg);
+  border-color: var(--gold);
+}

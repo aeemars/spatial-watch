@@ -60,6 +60,8 @@ type UpdateProfileResponse struct {
 type Room struct {
 	ID                      bson.ObjectID `bson:"_id,omitempty" json:"id"`
 	RoomCode                string        `bson:"roomCode" json:"roomCode"`
+	Name                    string        `bson:"name" json:"name"`
+	IsActive                bool          `bson:"isActive" json:"isActive"`
 	HostParticipantID       string        `bson:"hostParticipantId" json:"hostParticipantId"`
 	MediaURL                string        `bson:"mediaUrl" json:"mediaUrl"`
 	PlaybackPositionSeconds float64       `bson:"playbackPositionSeconds" json:"playbackPositionSeconds"`
@@ -77,6 +79,7 @@ type Participant struct {
 	DisplayName   string        `bson:"displayName" json:"displayName"`
 	JoinedAt      time.Time     `bson:"joinedAt" json:"joinedAt"`
 	LastSeenAt    time.Time     `bson:"lastSeenAt" json:"lastSeenAt"`
+	HasLeft       bool          `bson:"hasLeft" json:"hasLeft"`
 }
 
 // CommentaryCue represents a Director's Cut commentary entry
@@ -101,6 +104,7 @@ type Reaction struct {
 
 // CreateRoomRequest is the request body for creating a room
 type CreateRoomRequest struct {
+	RoomName    string `json:"roomName"`
 	DisplayName string `json:"displayName"`
 	MediaURL    string `json:"mediaUrl,omitempty"`
 }
@@ -108,6 +112,7 @@ type CreateRoomRequest struct {
 // CreateRoomResponse is returned after creating a room
 type CreateRoomResponse struct {
 	RoomCode      string `json:"roomCode"`
+	Name          string `json:"name"`
 	ParticipantID string `json:"participantId"`
 	IsHost        bool   `json:"isHost"`
 }
@@ -121,8 +126,30 @@ type JoinRoomRequest struct {
 // JoinRoomResponse is returned after joining a room
 type JoinRoomResponse struct {
 	RoomCode      string `json:"roomCode"`
+	Name          string `json:"name"`
 	ParticipantID string `json:"participantId"`
 	IsHost        bool   `json:"isHost"`
+}
+
+// UserRoomRecord represents an active room for continued access
+type UserRoomRecord struct {
+	RoomCode          string    `json:"roomCode"`
+	Name              string    `json:"name"`
+	HostDisplayName   string    `json:"hostDisplayName,omitempty"`
+	HostParticipantID string    `json:"hostParticipantId"`
+	MediaURL          string    `json:"mediaUrl"`
+	MediaTitle        string    `json:"mediaTitle"`
+	ParticipantCount  int       `json:"participantCount"`
+	CreatedAt         time.Time `json:"createdAt"`
+	JoinedAt          time.Time `json:"joinedAt,omitempty"`
+	IsHost            bool      `json:"isHost"`
+	IsActive          bool      `json:"isActive"`
+}
+
+// UserRoomsResponse is returned by GET /api/user/rooms
+type UserRoomsResponse struct {
+	CreatedRooms []UserRoomRecord `json:"createdRooms"`
+	JoinedRooms  []UserRoomRecord `json:"joinedRooms"`
 }
 
 // WSEvent represents a WebSocket message
@@ -154,6 +181,7 @@ type DirectorCutPayload struct {
 // RoomStatePayload carries the full room state for sync
 type RoomStatePayload struct {
 	RoomCode           string        `json:"roomCode"`
+	Name               string        `json:"name"`
 	MediaURL           string        `json:"mediaUrl"`
 	IsPaused           bool          `json:"isPaused"`
 	Position           float64       `json:"position"`

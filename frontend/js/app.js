@@ -8,6 +8,7 @@ const App = (() => {
   // State
   let currentScreen = 'landing';
   let roomCode = '';
+  let roomName = '';
   let participantId = '';
   let displayName = '';
   let isHost = false;
@@ -35,6 +36,41 @@ const App = (() => {
     // Bind landing buttons
     document.getElementById('btn-create-room').addEventListener('click', () => openModal('modal-create'));
     document.getElementById('btn-join-room').addEventListener('click', () => openModal('modal-join'));
+
+    // Records buttons (navbar and hero)
+    const btnOpenRecords = document.getElementById('btn-open-records');
+    if (btnOpenRecords) btnOpenRecords.addEventListener('click', openRecordsModal);
+
+    const btnHeroRecords = document.getElementById('btn-hero-records');
+    if (btnHeroRecords) btnHeroRecords.addEventListener('click', openRecordsModal);
+
+    const btnRecordsClose = document.getElementById('modal-records-close');
+    if (btnRecordsClose) btnRecordsClose.addEventListener('click', () => closeModal('modal-records'));
+
+    const modalRecords = document.getElementById('modal-records');
+    if (modalRecords) {
+      modalRecords.addEventListener('click', (e) => {
+        if (e.target.classList.contains('modal-overlay')) closeModal('modal-records');
+      });
+    }
+
+    const tabCreated = document.getElementById('tab-records-created');
+    if (tabCreated) tabCreated.addEventListener('click', () => switchRecordsTab('created'));
+
+    const tabJoined = document.getElementById('tab-records-joined');
+    if (tabJoined) tabJoined.addEventListener('click', () => switchRecordsTab('joined'));
+
+    const btnEmptyCreate = document.getElementById('btn-empty-create');
+    if (btnEmptyCreate) btnEmptyCreate.addEventListener('click', () => {
+      closeModal('modal-records');
+      openModal('modal-create');
+    });
+
+    const btnEmptyJoin = document.getElementById('btn-empty-join');
+    if (btnEmptyJoin) btnEmptyJoin.addEventListener('click', () => {
+      closeModal('modal-records');
+      openModal('modal-join');
+    });
 
     // Bind modal close buttons
     document.getElementById('modal-create-close').addEventListener('click', () => closeModal('modal-create'));
@@ -81,11 +117,18 @@ const App = (() => {
         closeModal('modal-create');
         closeModal('modal-join');
         closeModal('modal-profile');
+        closeModal('modal-records');
       }
     });
 
     // Create room form
     document.getElementById('btn-create-submit').addEventListener('click', handleCreateRoom);
+    const roomNameInput = document.getElementById('create-room-name');
+    if (roomNameInput) {
+      roomNameInput.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter') handleCreateRoom();
+      });
+    }
     document.getElementById('create-name').addEventListener('keydown', (e) => {
       if (e.key === 'Enter') handleCreateRoom();
     });
@@ -109,6 +152,8 @@ const App = (() => {
     // Lobby buttons
     document.getElementById('btn-enter-cinema').addEventListener('click', handleEnterCinema);
     document.getElementById('btn-leave-lobby').addEventListener('click', leaveRoom);
+    const btnShutdownLobby = document.getElementById('btn-shutdown-lobby');
+    if (btnShutdownLobby) btnShutdownLobby.addEventListener('click', handleShutdownCurrentRoom);
 
     // Cinema controls
     document.getElementById('btn-play-pause').addEventListener('click', handlePlayPause);
@@ -156,6 +201,7 @@ const App = (() => {
       const data = await API.getSession();
       currentUser = data.user;
       applyCurrentUser();
+      updateRecordsBadge();
       return currentUser;
     } catch (err) {
       console.warn('[auth] session initialization failed, retrying:', err);
@@ -163,6 +209,7 @@ const App = (() => {
         const retry = await API.getSession();
         currentUser = retry.user;
         applyCurrentUser();
+        updateRecordsBadge();
         return currentUser;
       } catch (e) {
         console.error('[auth] could not initialize session:', e);
@@ -263,6 +310,10 @@ const App = (() => {
     if (id === 'modal-create' && currentUser) {
       const input = document.getElementById('create-name');
       if (input && !input.value) input.value = currentUser.displayName;
+      const roomInput = document.getElementById('create-room-name');
+      const roomErr = document.getElementById('create-room-name-error');
+      if (roomErr) roomErr.hidden = true;
+      if (roomInput) roomInput.classList.remove('input--error');
     } else if (id === 'modal-join' && currentUser) {
       const input = document.getElementById('join-name');
       if (input && !input.value) input.value = currentUser.displayName;
@@ -295,9 +346,17 @@ const App = (() => {
   // ─── Room Creation ────────────────────────────────
 
   async function handleCreateRoom() {
+    const roomNameInput = document.getElementById('create-room-name');
+    const roomNameError = document.getElementById('create-room-name-error');
     const nameInput = document.getElementById('create-name');
     const nameError = document.getElementById('create-name-error');
     const submitBtn = document.getElementById('btn-create-submit');
+
+    // Reset errors
+    if (roomNameError) roomNameError.hidden = true;
+    if (roomNameInput) roomNameInput.classList.remove('input--error');
+    if (nameError) nameError.hidden = true;
+    if (nameInput) nameInput.classList.remove('input--error');
 
     // Loading state
     submitBtn.classList.add('btn--loading');
@@ -310,38 +369,65 @@ const App = (() => {
       // Proceed; API client will attempt transparent retry
     }
 
+    const rName = roomNameInput ? roomNameInput.value.trim() : '';
     let name = nameInput.value.trim();
     if (!name && currentUser) {
       name = currentUser.displayName;
     }
 
-    // Validate
-    if (!name || name.length < 2) {
-      nameError.textContent = 'Please enter a display name (2-32 characters)';
-      nameError.hidden = false;
-      nameInput.classList.add('input--error');
+    // Validate Room Name: 2-50 chars, no HTML brackets, must contain letters or digits
+    const hasAlphanumeric = /[a-zA-Z0-9]/.test(rName);
+    if (!rName || rName.length < 2 || rName.length > 50 || /[<>]/.test(rName) || !hasAlphanumeric) {
+      if (roomNameError) {
+        roomNameError.textContent = 'Room name must be 2-50 characters with letters or numbers, and no < or >';
+        roomNameError.hidden = false;
+      }
+      if (roomNameInput) roomNameInput.classList.add('input--error');
       submitBtn.classList.remove('btn--loading');
       submitBtn.disabled = false;
       return;
     }
 
-    nameError.hidden = true;
-    nameInput.classList.remove('input--error');
+    // Validate Display Name
+    if (!name || name.length < 2 || name.length > 32 || /[<>]/.test(name)) {
+      if (nameError) {
+        nameError.textContent = 'Please enter a display name (2-32 characters)';
+        nameError.hidden = false;
+      }
+      if (nameInput) nameInput.classList.add('input--error');
+      submitBtn.classList.remove('btn--loading');
+      submitBtn.disabled = false;
+      return;
+    }
 
     try {
-      const data = await API.createRoom(name);
+      const data = await API.createRoom(rName, name);
       roomCode = data.roomCode;
+      roomName = data.name || rName;
       participantId = data.participantId;
       displayName = name;
       isHost = data.isHost;
 
       closeModal('modal-create');
+      if (roomNameInput) roomNameInput.value = '';
       enterLobby();
-      showToast(`Room ${roomCode} created`, 'success');
+      showToast(`Room "${roomName}" (${roomCode}) created`, 'success');
+      updateRecordsBadge();
     } catch (e) {
-      nameError.textContent = e.message || 'Failed to create room';
-      nameError.hidden = false;
-      nameInput.classList.add('input--error');
+      const msg = e.message || 'Failed to create room';
+      if (msg.toLowerCase().includes('room name') || msg.toLowerCase().includes('already active')) {
+        if (roomNameError) {
+          roomNameError.textContent = msg;
+          roomNameError.hidden = false;
+        }
+        if (roomNameInput) roomNameInput.classList.add('input--error');
+      } else {
+        if (nameError) {
+          nameError.textContent = msg;
+          nameError.hidden = false;
+        }
+        if (nameInput) nameInput.classList.add('input--error');
+      }
     } finally {
       submitBtn.classList.remove('btn--loading');
       submitBtn.disabled = false;
@@ -403,6 +489,7 @@ const App = (() => {
     try {
       const data = await API.joinRoom(code, name);
       roomCode = data.roomCode;
+      roomName = data.name || '';
       participantId = data.participantId;
       displayName = name;
       isHost = data.isHost;
@@ -410,6 +497,7 @@ const App = (() => {
       closeModal('modal-join');
       enterLobby();
       showToast(`Joined room ${roomCode}`, 'success');
+      updateRecordsBadge();
     } catch (e) {
       codeError.textContent = e.message || 'Room not found';
       codeError.hidden = false;
@@ -427,6 +515,8 @@ const App = (() => {
 
     // Update lobby UI
     document.getElementById('lobby-room-code').textContent = roomCode;
+    const nameEl = document.getElementById('lobby-room-name');
+    if (nameEl) nameEl.textContent = roomName || 'Screening Room';
 
     // Connect WebSocket
     WS.init(roomCode);
@@ -445,6 +535,15 @@ const App = (() => {
       hostParticipantId = room.hostParticipantId;
       isHost = (room.hostParticipantId === participantId);
       participants = data.participants || [];
+      if (room.name) {
+        roomName = room.name;
+        const nameEl = document.getElementById('lobby-room-name');
+        if (nameEl) nameEl.textContent = room.name;
+      }
+
+      // Toggle host shutdown button in lobby
+      const btnShutdown = document.getElementById('btn-shutdown-lobby');
+      if (btnShutdown) btnShutdown.hidden = !isHost;
 
       // Update screening card
       document.getElementById('lobby-media-title').textContent = extractMediaTitle(room.mediaUrl);
@@ -498,6 +597,8 @@ const App = (() => {
 
       // Update cinema UI
       document.getElementById('cinema-room-code').textContent = roomCode;
+      const cinemaNameEl = document.getElementById('cinema-room-name');
+      if (cinemaNameEl) cinemaNameEl.textContent = room.name || roomName;
       document.getElementById('cinema-participant-badge').textContent = (data.participants || []).length;
 
       // Sync playback state
@@ -719,6 +820,14 @@ const App = (() => {
       showToast(payload.enabled ? 'Director\'s Cut enabled by host' : 'Director\'s Cut disabled', 'success');
     });
 
+    WS.on('room_shutdown', (data) => {
+      const payload = data.payload || {};
+      const reason = payload.reason || 'Screening room was shut down by host';
+      showToast(reason, 'error');
+      leaveRoom(true);
+      updateRecordsBadge();
+    });
+
     WS.on('error', (data) => {
       const payload = data.payload || {};
       showToast(payload.message || 'An error occurred', 'error');
@@ -769,19 +878,23 @@ const App = (() => {
 
   // ─── Leave Room & Navigation ─────────────────────
 
-  function leaveRoom() {
+  function leaveRoom(silent = false) {
     WS.disconnect();
     stopTimeUpdater();
     DirectorsCut.stopChecking();
     Cinema.destroy();
 
     roomCode = '';
+    roomName = '';
     participantId = '';
     isHost = false;
     participants = [];
 
     showScreen('landing');
-    showToast('Left room');
+    if (!silent) {
+      showToast('Left room');
+    }
+    updateRecordsBadge();
   }
 
   function goHome() {
@@ -794,6 +907,7 @@ const App = (() => {
     closeModal('modal-create');
     closeModal('modal-join');
     closeModal('modal-profile');
+    closeModal('modal-records');
 
     // Display landing screen
     showScreen('landing');
@@ -805,6 +919,304 @@ const App = (() => {
     if (window.location.search || window.location.hash) {
       window.history.pushState({}, '', window.location.pathname);
     }
+
+    updateRecordsBadge();
+  }
+
+  // ─── Room Records & Continued Access ──────────────
+
+  let activeRecordsTab = 'created';
+
+  async function updateRecordsBadge() {
+    try {
+      const data = await API.getUserRooms();
+      const createdCount = (data.createdRooms || []).length;
+      const joinedCount = (data.joinedRooms || []).length;
+      const totalCount = createdCount + joinedCount;
+
+      const badgeNav = document.getElementById('records-badge');
+      if (badgeNav) {
+        badgeNav.textContent = totalCount;
+        badgeNav.hidden = totalCount === 0;
+      }
+
+      const badgeHero = document.getElementById('hero-records-count');
+      if (badgeHero) {
+        badgeHero.textContent = totalCount;
+      }
+
+      const badgeCreated = document.getElementById('badge-created-count');
+      if (badgeCreated) badgeCreated.textContent = createdCount;
+
+      const badgeJoined = document.getElementById('badge-joined-count');
+      if (badgeJoined) badgeJoined.textContent = joinedCount;
+    } catch (e) {
+      // Session might not be initialized yet or offline
+    }
+  }
+
+  function openRecordsModal() {
+    openModal('modal-records');
+    loadUserRooms();
+  }
+
+  function switchRecordsTab(tab) {
+    activeRecordsTab = tab;
+    const tabCreated = document.getElementById('tab-records-created');
+    const tabJoined = document.getElementById('tab-records-joined');
+    const paneCreated = document.getElementById('pane-created-rooms');
+    const paneJoined = document.getElementById('pane-joined-rooms');
+
+    if (tab === 'created') {
+      if (tabCreated) {
+        tabCreated.classList.add('is-active');
+        tabCreated.setAttribute('aria-selected', 'true');
+      }
+      if (tabJoined) {
+        tabJoined.classList.remove('is-active');
+        tabJoined.setAttribute('aria-selected', 'false');
+      }
+      if (paneCreated) paneCreated.hidden = false;
+      if (paneJoined) paneJoined.hidden = true;
+    } else {
+      if (tabJoined) {
+        tabJoined.classList.add('is-active');
+        tabJoined.setAttribute('aria-selected', 'true');
+      }
+      if (tabCreated) {
+        tabCreated.classList.remove('is-active');
+        tabCreated.setAttribute('aria-selected', 'false');
+      }
+      if (paneJoined) paneJoined.hidden = false;
+      if (paneCreated) paneCreated.hidden = true;
+    }
+  }
+
+  async function loadUserRooms() {
+    const loadingEl = document.getElementById('records-loading');
+    const listCreated = document.getElementById('list-created-rooms');
+    const listJoined = document.getElementById('list-joined-rooms');
+    const emptyCreated = document.getElementById('empty-created-rooms');
+    const emptyJoined = document.getElementById('empty-joined-rooms');
+
+    if (loadingEl) loadingEl.hidden = false;
+
+    try {
+      const data = await API.getUserRooms();
+      const createdRooms = data.createdRooms || [];
+      const joinedRooms = data.joinedRooms || [];
+
+      // Update badge counters
+      const badgeCreated = document.getElementById('badge-created-count');
+      if (badgeCreated) badgeCreated.textContent = createdRooms.length;
+      const badgeJoined = document.getElementById('badge-joined-count');
+      if (badgeJoined) badgeJoined.textContent = joinedRooms.length;
+      const badgeNav = document.getElementById('records-badge');
+      if (badgeNav) {
+        const total = createdRooms.length + joinedRooms.length;
+        badgeNav.textContent = total;
+        badgeNav.hidden = total === 0;
+      }
+      const badgeHero = document.getElementById('hero-records-count');
+      if (badgeHero) {
+        badgeHero.textContent = createdRooms.length + joinedRooms.length;
+      }
+
+      // Render Created Rooms
+      if (listCreated) {
+        listCreated.innerHTML = '';
+        if (createdRooms.length === 0) {
+          if (emptyCreated) emptyCreated.hidden = false;
+        } else {
+          if (emptyCreated) emptyCreated.hidden = true;
+          createdRooms.forEach(room => {
+            const card = renderRecordCard(room, true);
+            listCreated.appendChild(card);
+          });
+        }
+      }
+
+      // Render Joined Rooms
+      if (listJoined) {
+        listJoined.innerHTML = '';
+        if (joinedRooms.length === 0) {
+          if (emptyJoined) emptyJoined.hidden = false;
+        } else {
+          if (emptyJoined) emptyJoined.hidden = true;
+          joinedRooms.forEach(room => {
+            const card = renderRecordCard(room, false);
+            listJoined.appendChild(card);
+          });
+        }
+      }
+    } catch (e) {
+      showToast('Failed to load room records', 'error');
+    } finally {
+      if (loadingEl) loadingEl.hidden = true;
+    }
+  }
+
+  function renderRecordCard(room, isCardHost) {
+    const card = document.createElement('div');
+    card.className = 'record-card';
+
+    const timeStr = formatRelativeTime(room.createdAt || room.joinedAt);
+    const mediaTitle = room.mediaTitle || extractMediaTitle(room.mediaUrl) || 'Spatial Screening';
+    const rName = room.name || 'Screening Room';
+    const rCode = room.code;
+
+    card.innerHTML = `
+      <div class="record-card__header">
+        <div class="record-card__title-group">
+          <div class="record-card__title">${escapeHtml(rName)}</div>
+          <div class="record-card__sub">
+            <span class="chip chip--sm chip--code">${escapeHtml(rCode)}</span>
+            <span>•</span>
+            <span>${isCardHost ? 'Created' : 'Joined'} ${escapeHtml(timeStr)}</span>
+          </div>
+        </div>
+        <div class="record-card__badge-wrap">
+          ${isCardHost ? '<span class="badge badge--host">Host</span>' : '<span class="chip chip--xs chip--presence">Guest</span>'}
+        </div>
+      </div>
+      <div class="record-card__body">
+        <div class="record-card__media" title="${escapeHtml(mediaTitle)}">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="10"/><polygon points="10 8 16 12 10 16 10 8"/></svg>
+          <span>${escapeHtml(mediaTitle)}</span>
+        </div>
+        <div class="record-card__actions">
+          ${isCardHost ? `
+            <button class="btn btn--danger-ghost btn--sm btn-card-shutdown" type="button" data-code="${escapeHtml(rCode)}" data-name="${escapeHtml(rName)}">
+              Shutdown
+            </button>
+            <button class="btn btn--primary btn--sm btn-card-reenter" type="button" data-code="${escapeHtml(rCode)}" data-host="true">
+              Re-enter
+            </button>
+          ` : `
+            <button class="btn btn--danger-ghost btn--sm btn-card-leave" type="button" data-code="${escapeHtml(rCode)}" data-name="${escapeHtml(rName)}">
+              Leave
+            </button>
+            <button class="btn btn--primary btn--sm btn-card-reenter" type="button" data-code="${escapeHtml(rCode)}" data-host="false">
+              Re-enter
+            </button>
+          `}
+        </div>
+      </div>
+    `;
+
+    // Wire up buttons
+    const btnShutdown = card.querySelector('.btn-card-shutdown');
+    if (btnShutdown) {
+      btnShutdown.addEventListener('click', () => handleShutdownRoom(rCode, rName));
+    }
+    const btnLeave = card.querySelector('.btn-card-leave');
+    if (btnLeave) {
+      btnLeave.addEventListener('click', () => handleLeaveJoinedRoom(rCode, rName));
+    }
+    const btnReenter = card.querySelector('.btn-card-reenter');
+    if (btnReenter) {
+      btnReenter.addEventListener('click', () => reenterRoom(rCode, isCardHost));
+    }
+
+    return card;
+  }
+
+  async function reenterRoom(code, asHostRole) {
+    closeModal('modal-records');
+
+    try {
+      if (asHostRole) {
+        // As host, verify room state and resume
+        const data = await API.getRoom(code);
+        const room = data.room;
+        roomCode = room.code;
+        roomName = room.name || '';
+        hostParticipantId = room.hostParticipantId;
+        isHost = true;
+        participantId = currentSession ? currentSession.participantId : '';
+        enterLobby();
+        showToast(`Re-entered "${roomName || roomCode}" as Host`, 'success');
+      } else {
+        // As guest, re-join with existing display name
+        const nameToUse = (currentSession && currentSession.displayName) ? currentSession.displayName : 'Guest';
+        const data = await API.joinRoom(code, nameToUse);
+        roomCode = data.roomCode;
+        roomName = data.roomName || '';
+        participantId = data.participantId;
+        isHost = false;
+        enterLobby();
+        showToast(`Re-entered "${roomName || roomCode}"`, 'success');
+      }
+      updateRecordsBadge();
+    } catch (e) {
+      showToast(e.message || 'Failed to re-enter room', 'error');
+      loadUserRooms(); // Refresh in case room was shutdown/deleted
+    }
+  }
+
+  async function handleShutdownRoom(code, name) {
+    const displayName = name || code;
+    if (!confirm(`Are you sure you want to shut down "${displayName}"?\n\nThis will permanently close the screening and disconnect all participants.`)) {
+      return;
+    }
+
+    try {
+      await API.shutdownRoom(code);
+      showToast(`Room "${displayName}" shut down`, 'success');
+
+      // If currently inside this room, return cleanly to landing
+      if (roomCode === code) {
+        leaveRoom(true);
+      }
+
+      await loadUserRooms();
+      await updateRecordsBadge();
+    } catch (e) {
+      showToast(e.message || 'Failed to shut down room', 'error');
+    }
+  }
+
+  function handleShutdownCurrentRoom() {
+    if (!roomCode) return;
+    handleShutdownRoom(roomCode, roomName);
+  }
+
+  async function handleLeaveJoinedRoom(code, name) {
+    const displayName = name || code;
+    if (!confirm(`Leave "${displayName}"?\n\nThis room will be removed from your continued access list.`)) {
+      return;
+    }
+
+    try {
+      await API.leaveRoomSession(code);
+      showToast(`Left "${displayName}"`, 'info');
+
+      // If currently inside this room, return cleanly to landing
+      if (roomCode === code) {
+        leaveRoom(true);
+      }
+
+      await loadUserRooms();
+      await updateRecordsBadge();
+    } catch (e) {
+      showToast(e.message || 'Failed to leave room', 'error');
+    }
+  }
+
+  function formatRelativeTime(dateInput) {
+    if (!dateInput) return 'recently';
+    const date = new Date(dateInput);
+    if (isNaN(date.getTime())) return 'recently';
+
+    const diffSec = Math.floor((Date.now() - date.getTime()) / 1000);
+    if (diffSec < 60) return 'just now';
+    const diffMin = Math.floor(diffSec / 60);
+    if (diffMin < 60) return `${diffMin}m ago`;
+    const diffHour = Math.floor(diffMin / 60);
+    if (diffHour < 24) return `${diffHour}h ago`;
+    const diffDay = Math.floor(diffHour / 24);
+    if (diffDay < 30) return `${diffDay}d ago`;
+    return date.toLocaleDateString();
   }
 
   // ─── Toast Notifications ──────────────────────────
@@ -867,6 +1279,9 @@ const App = (() => {
     leaveRoom,
     showScreen,
     goHome,
+    openRecordsModal,
+    updateRecordsBadge,
+    handleShutdownCurrentRoom,
   };
 })();
 

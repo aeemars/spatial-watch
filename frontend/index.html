@@ -42,8 +42,16 @@
         <span class="landing-top-brand__title">Spatial Watch</span>
       </a>
 
-      <!-- Top-Right Guest Profile Anchor -->
-      <div class="landing-top-profile" id="landing-profile-anchor">
+      <!-- Top-Right Actions -->
+      <div class="landing-top-actions" id="landing-profile-anchor">
+        <button class="records-chip" id="btn-open-records" type="button" aria-haspopup="dialog" aria-label="Room Records">
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/>
+            <path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/>
+          </svg>
+          <span class="records-chip__text">My Rooms</span>
+          <span class="badge badge--count records-chip__badge" id="records-chip-count" hidden>0</span>
+        </button>
         <button class="profile-chip" id="btn-open-profile" type="button" aria-haspopup="dialog" aria-label="Guest Profile">
           <span class="profile-chip__avatar" aria-hidden="true">🎬</span>
           <span class="profile-chip__name" id="profile-chip-name">Loading…</span>
@@ -83,6 +91,13 @@
             <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M15 3h4a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2h-4"/><polyline points="10 17 15 12 10 7"/><line x1="15" y1="12" x2="3" y2="12"/></svg>
             Join with Code
           </button>
+          <button class="btn btn--ghost btn--lg btn--records" id="btn-hero-records" type="button" aria-haspopup="dialog">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/>
+              <path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/>
+            </svg>
+            Room Records
+          </button>
         </div>
 
         <!-- Director's Cut preview card -->
@@ -121,8 +136,13 @@
         </div>
         <div class="modal__body">
           <div class="form-group">
-            <label class="label" for="create-name">Your Name</label>
-            <input class="input" id="create-name" type="text" placeholder="Enter your display name" autocomplete="nickname" enterkeyhint="go" maxlength="30" required>
+            <label class="label" for="create-room-name">Room Name</label>
+            <input class="input" id="create-room-name" type="text" placeholder="e.g., Midnight Sci-Fi, Film Club #4" autocomplete="off" enterkeyhint="next" maxlength="50" required>
+            <p class="helper-text" id="create-room-name-error" hidden></p>
+          </div>
+          <div class="form-group">
+            <label class="label" for="create-name">Your Display Name</label>
+            <input class="input" id="create-name" type="text" placeholder="Enter your display name" autocomplete="nickname" enterkeyhint="go" maxlength="32" required>
             <p class="helper-text" id="create-name-error" hidden></p>
           </div>
         </div>
@@ -214,6 +234,65 @@
     </div>
 
     <!-- ═══════════════════════════════════════════════ -->
+    <!-- MODAL: Room Records (Continued Access)          -->
+    <!-- ═══════════════════════════════════════════════ -->
+    <div class="modal-overlay" id="modal-records" role="dialog" aria-labelledby="modal-records-title" aria-modal="true" hidden>
+      <div class="modal modal--records">
+        <div class="modal__header">
+          <div class="modal__title-group">
+            <h2 class="modal__title" id="modal-records-title">Room Records</h2>
+            <span class="chip chip--gold chip--xs">Continued Access</span>
+          </div>
+          <button class="btn btn--ghost btn--icon modal__close" id="modal-records-close" type="button" aria-label="Close">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+          </button>
+        </div>
+
+        <div class="records-tabs" role="tablist">
+          <button class="records-tab is-active" id="tab-records-created" type="button" role="tab" aria-selected="true" aria-controls="pane-created-rooms">
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"/><circle cx="12" cy="13" r="4"/></svg>
+            <span>Created by You</span>
+            <span class="badge badge--count records-tab__badge" id="badge-created-count">0</span>
+          </button>
+          <button class="records-tab" id="tab-records-joined" type="button" role="tab" aria-selected="false" aria-controls="pane-joined-rooms">
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>
+            <span>Joined Rooms</span>
+            <span class="badge badge--count records-tab__badge" id="badge-joined-count">0</span>
+          </button>
+        </div>
+
+        <div class="modal__body modal__body--records">
+          <div class="records-loading" id="records-loading" hidden>
+            <span class="spinner" aria-label="Loading room records"></span>
+            <span>Fetching screening rooms…</span>
+          </div>
+
+          <!-- Created Rooms Pane -->
+          <div class="records-pane" id="pane-created-rooms" role="tabpanel">
+            <div class="records-list" id="list-created-rooms"></div>
+            <div class="records-empty" id="empty-created-rooms" hidden>
+              <div class="records-empty__icon" aria-hidden="true">🎬</div>
+              <h3 class="records-empty__title">No Created Rooms</h3>
+              <p class="records-empty__text">You don't have any active rooms hosting a screening. Create one to share cinema in spatial presence.</p>
+              <button class="btn btn--primary btn--sm" id="btn-empty-create" type="button">Create a Room</button>
+            </div>
+          </div>
+
+          <!-- Joined Rooms Pane -->
+          <div class="records-pane" id="pane-joined-rooms" role="tabpanel" hidden>
+            <div class="records-list" id="list-joined-rooms"></div>
+            <div class="records-empty" id="empty-joined-rooms" hidden>
+              <div class="records-empty__icon" aria-hidden="true">🍿</div>
+              <h3 class="records-empty__title">No Joined Rooms</h3>
+              <p class="records-empty__text">Rooms you join with a code stay saved here for continued access until you choose to leave.</p>
+              <button class="btn btn--secondary btn--sm" id="btn-empty-join" type="button">Join with Code</button>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ═══════════════════════════════════════════════ -->
     <!-- SCREEN 2: Room Lobby                            -->
     <!-- ═══════════════════════════════════════════════ -->
     <section class="screen screen--lobby" id="screen-lobby" aria-label="Room Lobby" hidden>
@@ -224,7 +303,10 @@
             <span class="lobby__wordmark">Spatial Watch</span>
           </a>
           <div class="lobby__room-info">
-            <span class="lobby__code" id="lobby-room-code">SW-XXXX</span>
+            <div class="lobby__room-identity">
+              <span class="lobby__room-name" id="lobby-room-name">Screening Room</span>
+              <span class="lobby__code" id="lobby-room-code">SW-XXXX</span>
+            </div>
             <span class="connection-status" id="lobby-connection-status">
               <span class="connection-status__dot connection-status__dot--connecting"></span>
               <span class="connection-status__text">Connecting…</span>
@@ -267,7 +349,10 @@
             <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polygon points="5 3 19 12 5 21 5 3"/></svg>
             Enter Cinema
           </button>
-          <button class="btn btn--ghost btn--sm" id="btn-leave-lobby" type="button">Leave Room</button>
+          <div class="lobby__footer-actions">
+            <button class="btn btn--ghost btn--sm" id="btn-leave-lobby" type="button">Leave Room</button>
+            <button class="btn btn--ghost btn--sm text--danger" id="btn-shutdown-lobby" type="button" hidden>Shutdown Room</button>
+          </div>
         </footer>
       </div>
     </section>
@@ -289,6 +374,7 @@
             <a href="/" class="cinema-controls__brand brand-home-link" aria-label="Spatial Watch Homepage" title="Return to Homepage">
               <img src="assets/logo.svg" alt="Spatial Watch Logo" class="cinema-controls__logo" width="18" height="18" aria-hidden="true">
             </a>
+            <span class="cinema-controls__name" id="cinema-room-name"></span>
             <span class="cinema-controls__code" id="cinema-room-code">SW-XXXX</span>
             <span class="badge badge--count" id="cinema-participant-badge">0</span>
           </div>

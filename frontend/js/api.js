@@ -63,13 +63,28 @@ const API = (() => {
     },
 
     /** Create a new room (host bound to authenticated session) */
-    createRoom(displayName, mediaUrl) {
-      return request('POST', '/api/rooms', { displayName, mediaUrl });
+    createRoom(roomName, displayName, mediaUrl) {
+      return request('POST', '/api/rooms', { roomName, displayName, mediaUrl });
     },
 
     /** Join an existing room (participant bound to authenticated session) */
     joinRoom(roomCode, displayName) {
       return request('POST', '/api/rooms/join', { roomCode, displayName });
+    },
+
+    /** Get user room records (created and joined rooms for continued access) */
+    getUserRooms() {
+      return request('GET', '/api/user/rooms');
+    },
+
+    /** Host shuts down / deletes a room */
+    shutdownRoom(roomCode) {
+      return request('DELETE', `/api/rooms/${encodeURIComponent(roomCode)}`);
+    },
+
+    /** Guest leaves a joined room session, removing it from joined records */
+    leaveRoomSession(roomCode) {
+      return request('POST', `/api/rooms/${encodeURIComponent(roomCode)}/leave`);
     },
 
     /** Get room info */
