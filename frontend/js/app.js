@@ -231,14 +231,14 @@ const App = (() => {
     const chipName = document.getElementById('profile-chip-name');
     if (chipName) chipName.textContent = currentUser.displayName;
 
-    // Pre-fill create/join modal inputs
+    // Auto-reflect set display name in create/join modal inputs
     const createInput = document.getElementById('create-name');
-    if (createInput && (!createInput.value || createInput.value === '')) {
+    if (createInput) {
       createInput.value = currentUser.displayName;
     }
 
     const joinInput = document.getElementById('join-name');
-    if (joinInput && (!joinInput.value || joinInput.value === '')) {
+    if (joinInput) {
       joinInput.value = currentUser.displayName;
     }
 
@@ -302,26 +302,45 @@ const App = (() => {
     if (!modal) return;
 
     // Ensure session is loaded and inputs pre-filled
-    ensureSession().then(() => {
-      applyCurrentUser();
+    ensureSession().then((user) => {
+      if (user) {
+        applyCurrentUser();
+      }
     });
 
-    // Refresh prefilled names when opening modals
-    if (id === 'modal-create' && currentUser) {
+    // Populate prefilled names and clear previous input errors when opening modals
+    if (id === 'modal-create') {
       const input = document.getElementById('create-name');
-      if (input && !input.value) input.value = currentUser.displayName;
+      if (input && currentUser && currentUser.displayName) {
+        input.value = currentUser.displayName;
+      }
       const roomInput = document.getElementById('create-room-name');
       const roomErr = document.getElementById('create-room-name-error');
       if (roomErr) roomErr.hidden = true;
       if (roomInput) roomInput.classList.remove('input--error');
-    } else if (id === 'modal-join' && currentUser) {
+      const nameErr = document.getElementById('create-name-error');
+      if (nameErr) nameErr.hidden = true;
+      if (input) input.classList.remove('input--error');
+    } else if (id === 'modal-join') {
       const input = document.getElementById('join-name');
-      if (input && !input.value) input.value = currentUser.displayName;
-    } else if (id === 'modal-profile' && currentUser) {
+      if (input && currentUser && currentUser.displayName) {
+        input.value = currentUser.displayName;
+      }
+      const codeErr = document.getElementById('join-code-error');
+      if (codeErr) codeErr.hidden = true;
+      const codeInput = document.getElementById('join-code');
+      if (codeInput) codeInput.classList.remove('input--error');
+      const nameErr = document.getElementById('join-name-error');
+      if (nameErr) nameErr.hidden = true;
+      if (input) input.classList.remove('input--error');
+    } else if (id === 'modal-profile') {
       const input = document.getElementById('profile-name-input');
-      if (input) input.value = currentUser.displayName;
+      if (input && currentUser) input.value = currentUser.displayName;
       const uid = document.getElementById('profile-user-id');
-      if (uid) uid.textContent = currentUser.id;
+      if (uid && currentUser) uid.textContent = currentUser.id;
+      const errEl = document.getElementById('profile-name-error');
+      if (errEl) errEl.hidden = true;
+      if (input) input.classList.remove('input--error');
     }
 
     modal.hidden = false;
@@ -329,9 +348,17 @@ const App = (() => {
     modal.offsetHeight;
     modal.classList.add('is-visible');
 
-    // Focus first input
-    const input = modal.querySelector('input');
-    if (input) setTimeout(() => input.focus(), 100);
+    // Focus primary action input: Room Name for Create, Room Code for Join
+    if (id === 'modal-create') {
+      const roomInput = document.getElementById('create-room-name');
+      if (roomInput) setTimeout(() => roomInput.focus(), 100);
+    } else if (id === 'modal-join') {
+      const codeInput = document.getElementById('join-code');
+      if (codeInput) setTimeout(() => codeInput.focus(), 100);
+    } else {
+      const input = modal.querySelector('input');
+      if (input) setTimeout(() => input.focus(), 100);
+    }
   }
 
   function closeModal(id) {
@@ -407,6 +434,12 @@ const App = (() => {
       participantId = data.participantId;
       displayName = name;
       isHost = data.isHost;
+
+      // Keep guest profile display name synchronized if a new name was entered
+      if (currentUser && name && name !== currentUser.displayName) {
+        currentUser.displayName = name;
+        applyCurrentUser();
+      }
 
       closeModal('modal-create');
       if (roomNameInput) roomNameInput.value = '';
@@ -493,6 +526,12 @@ const App = (() => {
       participantId = data.participantId;
       displayName = name;
       isHost = data.isHost;
+
+      // Keep guest profile display name synchronized if a new name was entered
+      if (currentUser && name && name !== currentUser.displayName) {
+        currentUser.displayName = name;
+        applyCurrentUser();
+      }
 
       closeModal('modal-join');
       enterLobby();
@@ -1133,15 +1172,15 @@ const App = (() => {
         roomName = room.name || '';
         hostParticipantId = room.hostParticipantId;
         isHost = true;
-        participantId = currentSession ? currentSession.participantId : '';
+        participantId = currentUser ? currentUser.id : participantId;
         enterLobby();
         showToast(`Re-entered "${roomName || roomCode}" as Host`, 'success');
       } else {
         // As guest, re-join with existing display name
-        const nameToUse = (currentSession && currentSession.displayName) ? currentSession.displayName : 'Guest';
+        const nameToUse = (currentUser && currentUser.displayName) ? currentUser.displayName : (displayName || 'Guest');
         const data = await API.joinRoom(code, nameToUse);
         roomCode = data.roomCode;
-        roomName = data.roomName || '';
+        roomName = data.name || '';
         participantId = data.participantId;
         isHost = false;
         enterLobby();
