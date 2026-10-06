@@ -127,10 +127,10 @@ const XR = (() => {
       }
     } else {
       // Desktop / 2D Browser Fallback
-      if (dot) dot.className = 'vr-readiness__dot is-desktop';
+      if (dot) dot.className = 'vr-readiness__dot is-desktop' + (mediaReady ? ' is-ready' : '');
       if (chip) {
-        chip.textContent = 'Desktop Preview Mode';
-        chip.className = 'chip chip--xs chip--neutral';
+        chip.textContent = mediaReady ? 'Desktop Preview Ready' : 'Loading Media…';
+        chip.className = 'chip chip--xs ' + (mediaReady ? 'chip--neutral' : 'chip--violet');
       }
 
       if (preflightXrIcon && preflightXrText) {
@@ -147,8 +147,13 @@ const XR = (() => {
 
       // Enter button for desktop preview
       if (enterBtn && enterLabel) {
-        enterBtn.disabled = false;
-        enterLabel.textContent = 'Enter Cinema (Desktop Preview)';
+        if (mediaReady) {
+          enterBtn.disabled = false;
+          enterLabel.textContent = 'Enter Cinema (Desktop Preview)';
+        } else {
+          enterBtn.disabled = true;
+          enterLabel.textContent = 'Preparing Media Stream…';
+        }
       }
     }
   }

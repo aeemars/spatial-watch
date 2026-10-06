@@ -24,8 +24,13 @@
   <link rel="stylesheet" href="css/components.css">
   <link rel="stylesheet" href="css/scenes.css">
 
-  <!-- Three.js for WebXR rendering -->
-  <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r168/three.min.js"></script>
+  <!-- Three.js for WebXR rendering (Bundled local + fallback) -->
+  <script src="assets/three.min.js"></script>
+  <script>
+    if (typeof THREE === 'undefined') {
+      document.write('<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"><\/script>');
+    }
+  </script>
 </head>
 <body>
   <div class="app-shell" id="app">

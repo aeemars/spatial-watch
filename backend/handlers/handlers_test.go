@@ -645,8 +645,8 @@ func TestGetMediaAssetsCatalog(t *testing.T) {
 	for _, a := range assets {
 		if a.AssetID == "big-buck-bunny" {
 			foundBBB = true
-			if !strings.HasPrefix(a.MediaURL, "https://") || !strings.HasSuffix(a.MediaURL, ".mp4") {
-				t.Fatalf("Big Buck Bunny URL must be HTTPS MP4, got %s", a.MediaURL)
+			if (!strings.HasPrefix(a.MediaURL, "https://") && !strings.HasPrefix(a.MediaURL, "/assets/")) || !strings.HasSuffix(a.MediaURL, ".mp4") {
+				t.Fatalf("Big Buck Bunny URL must be valid MP4, got %s", a.MediaURL)
 			}
 			if !a.CORSReady {
 				t.Fatalf("Expected Big Buck Bunny to have CORSReady = true")
@@ -910,3 +910,55 @@ func TestGetUserRooms_IncludesMediaSnapshot(t *testing.T) {
 		t.Fatalf("Expected duration 888s, got %f", record.DurationSeconds)
 	}
 }
+
+func TestGetRoom_AutoHealsLegacy403MediaURL(t *testing.T) {
+	rig := setupTestRig()
+	_, cookie := createTestGuestSession(t, rig)
+
+	// Create room
+	body, _ := json.Marshal(models.CreateRoomRequest{
+		RoomName:     "Legacy Test Room",
+		MediaAssetID: "big-buck-bunny",
+	})
+	req, _ := http.NewRequest("POST", "/api/rooms", bytes.NewBuffer(body))
+	req.Header.Set("Content-Type", "application/json")
+	req.AddCookie(cookie)
+	rr := httptest.NewRecorder()
+	rig.Router.ServeHTTP(rr, req)
+	if rr.Code != http.StatusCreated {
+		t.Fatalf("Expected 201 Created, got %d", rr.Code)
+	}
+
+	var createResp models.CreateRoomResponse
+	_ = json.Unmarshal(rr.Body.Bytes(), &createResp)
+
+	// Manually inject a legacy 403 Google Cloud Storage URL into the room
+	legacyURL := "https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/BigBuckBunny.mp4"
+	_ = rig.RoomRepo.UpdateMediaURL(context.Background(), createResp.RoomCode, legacyURL)
+
+	// Call GetRoom
+	reqGet, _ := http.NewRequest("GET", "/api/rooms/"+createResp.RoomCode, nil)
+	rrGet := httptest.NewRecorder()
+	rig.Router.ServeHTTP(rrGet, reqGet)
+	if rrGet.Code != http.StatusOK {
+		t.Fatalf("Expected 200 OK from GetRoom, got %d", rrGet.Code)
+	}
+
+	var getResp struct {
+		Room models.Room `json:"room"`
+	}
+	_ = json.Unmarshal(rrGet.Body.Bytes(), &getResp)
+
+	// Should be auto-healed to the local bundled asset
+	expectedHealedURL := "/assets/videos/big-buck-bunny.mp4"
+	if getResp.Room.MediaURL != expectedHealedURL {
+		t.Fatalf("Expected legacy media URL to be auto-healed to %q, got %q", expectedHealedURL, getResp.Room.MediaURL)
+	}
+
+	// Verify persistence in repository
+	savedRoom, err := rig.RoomRepo.FindByCode(context.Background(), createResp.RoomCode)
+	if err != nil || savedRoom.MediaURL != expectedHealedURL {
+		t.Fatalf("Expected repository to persist healed URL %q, got %q (err: %v)", expectedHealedURL, savedRoom.MediaURL, err)
+	}
+}
+

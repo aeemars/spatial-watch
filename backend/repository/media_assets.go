@@ -144,3 +144,45 @@ func (r *MediaAssetRepo) Count(ctx context.Context, filter bson.M) (int64, error
 	defer r.mu.RUnlock()
 	return int64(len(r.assets)), nil
 }
+
+// Upsert inserts or updates a media asset matching its assetId
+func (r *MediaAssetRepo) Upsert(ctx context.Context, asset *models.MediaAsset) error {
+	cleanID := strings.TrimSpace(strings.ToLower(asset.AssetID))
+	if cleanID == "" {
+		return errors.New("empty asset ID")
+	}
+	now := time.Now()
+	if asset.CreatedAt.IsZero() {
+		asset.CreatedAt = now
+	}
+
+	if r.col != nil {
+		opts := options.UpdateOne().SetUpsert(true)
+		update := bson.M{
+			"$set": bson.M{
+				"title":                 asset.Title,
+				"description":           asset.Description,
+				"durationSeconds":       asset.DurationSeconds,
+				"posterUrl":             asset.PosterURL,
+				"gradient":              asset.Gradient,
+				"mediaUrl":              asset.MediaURL,
+				"corsReady":             asset.CORSReady,
+				"directorCutAvailable":  asset.DirectorCutAvailable,
+				"commentaryTemplateRef": asset.CommentaryTemplateRef,
+			},
+			"$setOnInsert": bson.M{
+				"assetId":   cleanID,
+				"createdAt": asset.CreatedAt,
+			},
+		}
+		_, err := r.col.UpdateOne(ctx, bson.M{"assetId": cleanID}, update, opts)
+		return err
+	}
+
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	copy := *asset
+	r.assets[cleanID] = &copy
+	return nil
+}
+

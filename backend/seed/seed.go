@@ -75,7 +75,7 @@ func DefaultMediaAssets() []models.MediaAsset {
 			DurationSeconds:       596,
 			PosterURL:             "https://peach.blender.org/wp-content/uploads/bbb-splash.png",
 			Gradient:              "linear-gradient(135deg, #163820 0%, #0c1f13 100%)",
-			MediaURL:              "https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/BigBuckBunny.mp4",
+			MediaURL:              "/assets/videos/big-buck-bunny.mp4",
 			CORSReady:             true,
 			DirectorCutAvailable:  true,
 			CommentaryTemplateRef: "default",
@@ -87,7 +87,7 @@ func DefaultMediaAssets() []models.MediaAsset {
 			DurationSeconds:      734,
 			PosterURL:            "https://mango.blender.org/wp-content/uploads/2012/09/02_celia_04.jpg",
 			Gradient:             "linear-gradient(135deg, #2b1f3d 0%, #110c1c 100%)",
-			MediaURL:             "https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/TearsOfSteel.mp4",
+			MediaURL:             "/assets/videos/tears-of-steel.mp4",
 			CORSReady:            true,
 			DirectorCutAvailable: false,
 		},
@@ -98,7 +98,7 @@ func DefaultMediaAssets() []models.MediaAsset {
 			DurationSeconds:      888,
 			PosterURL:            "https://durian.blender.org/wp-content/themes/durian/images/header.jpg",
 			Gradient:             "linear-gradient(135deg, #3d2a1b 0%, #1c1209 100%)",
-			MediaURL:             "https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/Sintel.mp4",
+			MediaURL:             "/assets/videos/sintel.mp4",
 			CORSReady:            true,
 			DirectorCutAvailable: false,
 		},
@@ -109,7 +109,7 @@ func DefaultMediaAssets() []models.MediaAsset {
 			DurationSeconds:      653,
 			PosterURL:            "https://orange.blender.org/wp-content/themes/orange/images/ed_header.jpg",
 			Gradient:             "linear-gradient(135deg, #1f2b3d 0%, #0c141c 100%)",
-			MediaURL:             "https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/ElephantsDream.mp4",
+			MediaURL:             "/assets/videos/elephants-dream.mp4",
 			CORSReady:            true,
 			DirectorCutAvailable: false,
 		},
@@ -138,20 +138,14 @@ func Run(commentRepo *repository.CommentaryRepo, mediaRepo *repository.MediaAsse
 		}
 	}
 
-	// Seed media catalog assets
+	// Seed / upsert media catalog assets
 	if mediaRepo != nil {
-		mCount, err := mediaRepo.Count(ctx, bson.M{})
-		if err != nil {
-			log.Printf("[seed] failed to check existing media assets: %v", err)
-		} else if mCount > 0 {
-			log.Printf("[seed] %d media assets already exist, skipping seed", mCount)
-		} else {
-			assets := DefaultMediaAssets()
-			if err := mediaRepo.InsertMany(ctx, assets); err != nil {
-				log.Printf("[seed] failed to insert media assets: %v", err)
-			} else {
-				log.Printf("[seed] inserted %d default media assets into catalog", len(assets))
+		assets := DefaultMediaAssets()
+		for _, a := range assets {
+			if err := mediaRepo.Upsert(ctx, &a); err != nil {
+				log.Printf("[seed] failed to upsert media asset %s: %v", a.AssetID, err)
 			}
 		}
+		log.Printf("[seed] synchronized %d default media assets into catalog", len(assets))
 	}
 }

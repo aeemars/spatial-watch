@@ -274,7 +274,7 @@ func (h *Handler) CreateRoom(w http.ResponseWriter, r *http.Request) {
 		mediaSourceType = "catalog"
 		resolvedAssetID = "big-buck-bunny"
 		resolvedMediaTitle = "Big Buck Bunny"
-		resolvedMediaURL = "https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/BigBuckBunny.mp4"
+		resolvedMediaURL = "/assets/videos/big-buck-bunny.mp4"
 		resolvedDuration = 596
 		if h.MediaAssetRepo != nil {
 			if asset, err := h.MediaAssetRepo.FindByAssetID(ctx, "big-buck-bunny"); err == nil && asset != nil {
@@ -410,6 +410,18 @@ func (h *Handler) GetRoom(w http.ResponseWriter, r *http.Request) {
 	if err != nil || !room.IsActive {
 		respondError(w, http.StatusNotFound, "Room not found or is no longer active")
 		return
+	}
+
+	// Auto-heal legacy 403 Google Cloud Storage URLs for catalog films
+	if strings.Contains(room.MediaURL, "commondatastorage.googleapis.com") {
+		healedURL := "/assets/videos/big-buck-bunny.mp4"
+		if h.MediaAssetRepo != nil && room.MediaAssetID != "" {
+			if asset, err := h.MediaAssetRepo.FindByAssetID(ctx, room.MediaAssetID); err == nil && asset != nil {
+				healedURL = asset.MediaURL
+			}
+		}
+		room.MediaURL = healedURL
+		_ = h.RoomRepo.UpdateMediaURL(ctx, roomCode, healedURL)
 	}
 
 	participants, _ := h.PartRepo.FindByRoom(ctx, roomCode)

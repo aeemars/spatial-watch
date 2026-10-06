@@ -1003,7 +1003,8 @@ const App = (() => {
       // Update video time display
       startTimeUpdater();
     }).catch(e => {
-      showToast('Failed to load cinema', 'error');
+      console.error('[cinema] Enter cinema failed:', e);
+      showToast(e.message || 'Failed to load cinema', 'error');
       showScreen('lobby');
     });
   }

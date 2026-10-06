@@ -73,6 +73,13 @@ const Cinema = (() => {
     }
 
     // Initialize Three.js
+    if (typeof THREE === 'undefined') {
+      console.error('[cinema] Three.js is not loaded');
+      throw new Error('3D Cinema engine (Three.js) is not available');
+    }
+
+    video.loop = true;
+
     scene = new THREE.Scene();
     scene.background = new THREE.Color(0x050710);
 
