@@ -21,6 +21,7 @@ import (
 	"spatialwatch/handlers"
 	"spatialwatch/internal/auth"
 	"spatialwatch/internal/cache"
+	"spatialwatch/internal/ratelimit"
 	"spatialwatch/internal/storage"
 	"spatialwatch/repository"
 	"spatialwatch/seed"
@@ -102,11 +103,15 @@ func main() {
 	}
 	handler.SetStorage(r2Storage)
 
+	// Initialize in-memory rate limiter with anti-abuse rules
+	limiter := ratelimit.NewDefaultLimiter()
+
 	// Set up router
 	r := mux.NewRouter()
 
-	// Apply Cloudflare edge cache and CORS middlewares
+	// Apply Cloudflare edge cache, rate limiting, and CORS middlewares
 	r.Use(cache.Middleware())
+	r.Use(limiter.Middleware())
 	r.Use(corsMiddleware(cfg.CORSAllowedOrigins))
 
 	// API routes
@@ -170,6 +175,7 @@ func main() {
 		<-sigChan
 
 		log.Println("Shutting down gracefully...")
+		limiter.Stop()
 		stopReaper()
 		shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer shutdownCancel()

@@ -1,0 +1,89 @@
+{
+  "name": "Spatial Watch Cloudflare Rate Limiting & Anti-Abuse Ruleset",
+  "description": "Edge rate limiting rules protecting Spatial Watch against room flooding, bot session exhaustion, R2 presign abuse, and WebSocket connection storms.",
+  "kind": "zone",
+  "phase": "http_ratelimit",
+  "rules": [
+    {
+      "id": "sw-limit-room-creation",
+      "description": "Limit Room Creation: Max 5 POST requests per 5 minutes per IP",
+      "expression": "(http.request.method eq \"POST\" and http.request.uri.path eq \"/api/rooms\")",
+      "action": "block",
+      "action_parameters": {
+        "response": {
+          "status_code": 429,
+          "content_type": "application/json",
+          "content": "{\"error\": \"Too many room creation attempts. Please wait 5 minutes before creating another room.\"}"
+        }
+      },
+      "ratelimit": {
+        "characteristics": [
+          "ip.src"
+        ],
+        "period": 300,
+        "requests_per_period": 5,
+        "mitigation_timeout": 300
+      },
+      "enabled": true
+    },
+    {
+      "id": "sw-challenge-session-flooding",
+      "description": "Challenge Session Initialization: Max 30 GET requests per minute per IP",
+      "expression": "(http.request.method eq \"GET\" and http.request.uri.path eq \"/api/auth/session\")",
+      "action": "managed_challenge",
+      "ratelimit": {
+        "characteristics": [
+          "ip.src"
+        ],
+        "period": 60,
+        "requests_per_period": 30,
+        "mitigation_timeout": 60
+      },
+      "enabled": true
+    },
+    {
+      "id": "sw-limit-r2-presign-upload",
+      "description": "Limit R2 Presign Video Uploads: Max 3 POST requests per 10 minutes per IP",
+      "expression": "(http.request.method eq \"POST\" and http.request.uri.path eq \"/api/media/presign-upload\")",
+      "action": "block",
+      "action_parameters": {
+        "response": {
+          "status_code": 429,
+          "content_type": "application/json",
+          "content": "{\"error\": \"Too many video upload requests. Please wait before uploading another clip.\"}"
+        }
+      },
+      "ratelimit": {
+        "characteristics": [
+          "ip.src"
+        ],
+        "period": 600,
+        "requests_per_period": 3,
+        "mitigation_timeout": 600
+      },
+      "enabled": true
+    },
+    {
+      "id": "sw-limit-websocket-handshakes",
+      "description": "Limit WebSocket Handshake Connections: Max 10 handshakes per minute per IP",
+      "expression": "(http.request.method eq \"GET\" and http.request.uri.path eq \"/ws\")",
+      "action": "block",
+      "action_parameters": {
+        "response": {
+          "status_code": 429,
+          "content_type": "application/json",
+          "content": "{\"error\": \"Too many WebSocket connections. Please wait before reconnecting.\"}"
+        }
+      },
+      "ratelimit": {
+        "characteristics": [
+          "ip.src"
+        ],
+        "period": 60,
+        "requests_per_period": 10,
+        "mitigation_timeout": 60
+      },
+      "enabled": true
+    }
+  ]
+}

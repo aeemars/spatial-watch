@@ -1,5 +1,4 @@
 {
-  "$schema": "https://raw.githubusercontent.com/cloudflare/cloudflare-docs/production/src/rulesets.json",
   "name": "Spatial Watch Cloudflare Edge Cache Ruleset",
   "description": "Optimized edge caching for Spatial Watch: aggressive asset caching, range request video delivery, and guaranteed bypass for real-time WebSockets and APIs.",
   "kind": "zone",
