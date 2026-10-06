@@ -20,6 +20,7 @@ import (
 	"spatialwatch/config"
 	"spatialwatch/handlers"
 	"spatialwatch/internal/auth"
+	"spatialwatch/internal/cache"
 	"spatialwatch/internal/storage"
 	"spatialwatch/repository"
 	"spatialwatch/seed"
@@ -104,7 +105,8 @@ func main() {
 	// Set up router
 	r := mux.NewRouter()
 
-	// Apply CORS middleware to all routes
+	// Apply Cloudflare edge cache and CORS middlewares
+	r.Use(cache.Middleware())
 	r.Use(corsMiddleware(cfg.CORSAllowedOrigins))
 
 	// API routes
@@ -206,7 +208,7 @@ func corsMiddleware(allowedOrigins []string) mux.MiddlewareFunc {
 				if allowed {
 					w.Header().Set("Access-Control-Allow-Origin", origin)
 					w.Header().Set("Access-Control-Allow-Credentials", "true")
-					w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PATCH, OPTIONS")
+					w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PATCH, PUT, DELETE, OPTIONS")
 					w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Cookie")
 				}
 			}

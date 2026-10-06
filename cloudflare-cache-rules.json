@@ -1,0 +1,81 @@
+{
+  "$schema": "https://raw.githubusercontent.com/cloudflare/cloudflare-docs/production/src/rulesets.json",
+  "name": "Spatial Watch Cloudflare Edge Cache Ruleset",
+  "description": "Optimized edge caching for Spatial Watch: aggressive asset caching, range request video delivery, and guaranteed bypass for real-time WebSockets and APIs.",
+  "kind": "zone",
+  "phase": "http_request_cache_settings",
+  "rules": [
+    {
+      "id": "sw-bypass-realtime-and-api",
+      "description": "Bypass Edge Cache for WebSocket Hub and Dynamic API Endpoints",
+      "expression": "(http.request.uri.path starts_with \"/api/\") or (http.request.uri.path eq \"/ws\")",
+      "action": "set_cache_settings",
+      "action_parameters": {
+        "cache": false,
+        "respect_strong_etags": true
+      },
+      "enabled": true
+    },
+    {
+      "id": "sw-cache-bundled-videos",
+      "description": "Cache Bundled MP4 Video Streams with Range Request Slicing",
+      "expression": "(http.request.uri.path starts_with \"/assets/videos/\") and (http.request.uri.path ends_with \".mp4\")",
+      "action": "set_cache_settings",
+      "action_parameters": {
+        "cache": true,
+        "edge_ttl": {
+          "mode": "override_origin",
+          "default": 86400
+        },
+        "browser_ttl": {
+          "mode": "override_origin",
+          "default": 86400
+        },
+        "serve_stale": {
+          "disable_stale_while_updating": false
+        },
+        "slice_range_requests": true
+      },
+      "enabled": true
+    },
+    {
+      "id": "sw-cache-static-assets",
+      "description": "Aggressive 7-Day Immutable Edge Cache for Three.js, CSS, JS, and Icons",
+      "expression": "(http.request.uri.path starts_with \"/css/\") or (http.request.uri.path starts_with \"/assets/\") or (http.request.uri.path ends_with \".js\") or (http.request.uri.path ends_with \".css\") or (http.request.uri.path ends_with \".svg\") or (http.request.uri.path ends_with \".webp\")",
+      "action": "set_cache_settings",
+      "action_parameters": {
+        "cache": true,
+        "edge_ttl": {
+          "mode": "override_origin",
+          "default": 604800
+        },
+        "browser_ttl": {
+          "mode": "override_origin",
+          "default": 604800
+        },
+        "serve_stale": {
+          "disable_stale_while_updating": false
+        }
+      },
+      "enabled": true
+    },
+    {
+      "id": "sw-cache-html-documents",
+      "description": "Short 5-Minute Edge Cache for Root and HTML Pages with Must-Revalidate",
+      "expression": "(http.request.uri.path eq \"/\") or (http.request.uri.path ends_with \".html\")",
+      "action": "set_cache_settings",
+      "action_parameters": {
+        "cache": true,
+        "edge_ttl": {
+          "mode": "override_origin",
+          "default": 300
+        },
+        "browser_ttl": {
+          "mode": "override_origin",
+          "default": 300
+        }
+      },
+      "enabled": true
+    }
+  ]
+}

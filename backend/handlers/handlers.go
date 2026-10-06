@@ -748,6 +748,8 @@ func checkOrigin(allowedOrigins []string) func(r *http.Request) bool {
 
 func respondJSON(w http.ResponseWriter, status int, data interface{}) {
 	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("Cache-Control", "no-store, no-cache, must-revalidate, private")
+	w.Header().Set("Pragma", "no-cache")
 	w.WriteHeader(status)
 	json.NewEncoder(w).Encode(data)
 }
