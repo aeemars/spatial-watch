@@ -127,11 +127,13 @@ type Reaction struct {
 
 // CreateRoomRequest is the request body for creating a room
 type CreateRoomRequest struct {
-	RoomName     string `json:"roomName"`
-	DisplayName  string `json:"displayName"`
-	MediaAssetID string `json:"mediaAssetId,omitempty"`
-	MediaURL     string `json:"mediaUrl,omitempty"`
-	MediaTitle   string `json:"mediaTitle,omitempty"`
+	RoomName        string  `json:"roomName"`
+	DisplayName     string  `json:"displayName"`
+	MediaAssetID    string  `json:"mediaAssetId,omitempty"`
+	MediaURL        string  `json:"mediaUrl,omitempty"`
+	MediaTitle      string  `json:"mediaTitle,omitempty"`
+	DurationSeconds float64 `json:"durationSeconds,omitempty"`
+	MediaSourceType string  `json:"mediaSourceType,omitempty"`
 }
 
 // CreateRoomResponse is returned after creating a room

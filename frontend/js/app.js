@@ -42,8 +42,14 @@ const App = (() => {
     const tabCatalog = document.getElementById('tab-media-catalog');
     if (tabCatalog) tabCatalog.addEventListener('click', () => switchMediaSourceTab('catalog'));
 
+    const tabUpload = document.getElementById('tab-media-upload');
+    if (tabUpload) tabUpload.addEventListener('click', () => switchMediaSourceTab('upload'));
+
     const tabCustom = document.getElementById('tab-media-custom');
     if (tabCustom) tabCustom.addEventListener('click', () => switchMediaSourceTab('custom'));
+
+    // Upload dropzone & file selection
+    setupUploadControls();
 
     // Preload media catalog
     loadMediaCatalog();
@@ -511,38 +517,213 @@ const App = (() => {
 
   // ─── Media Catalog & Source Tabs ──────────────────
 
+  let uploadedFile = null;
+  let uploadedFileDuration = 0;
+
   function switchMediaSourceTab(source) {
     activeMediaSource = source;
     const tabCat = document.getElementById('tab-media-catalog');
+    const tabUpload = document.getElementById('tab-media-upload');
     const tabCust = document.getElementById('tab-media-custom');
     const paneCat = document.getElementById('pane-media-catalog');
+    const paneUpload = document.getElementById('pane-media-upload');
     const paneCust = document.getElementById('pane-media-custom');
 
-    if (source === 'catalog') {
-      if (tabCat) {
-        tabCat.classList.add('is-active');
-        tabCat.setAttribute('aria-selected', 'true');
+    const tabs = [
+      { id: 'catalog', btn: tabCat, pane: paneCat },
+      { id: 'upload', btn: tabUpload, pane: paneUpload },
+      { id: 'custom', btn: tabCust, pane: paneCust },
+    ];
+
+    tabs.forEach(t => {
+      const isMatch = t.id === source;
+      if (t.btn) {
+        if (isMatch) {
+          t.btn.classList.add('is-active');
+          t.btn.setAttribute('aria-selected', 'true');
+        } else {
+          t.btn.classList.remove('is-active');
+          t.btn.setAttribute('aria-selected', 'false');
+        }
       }
-      if (tabCust) {
-        tabCust.classList.remove('is-active');
-        tabCust.setAttribute('aria-selected', 'false');
+      if (t.pane) {
+        if (isMatch) {
+          t.pane.classList.remove('is-hidden');
+        } else {
+          t.pane.classList.add('is-hidden');
+        }
       }
-      if (paneCat) paneCat.classList.remove('is-hidden');
-      if (paneCust) paneCust.classList.add('is-hidden');
-    } else {
-      if (tabCust) {
-        tabCust.classList.add('is-active');
-        tabCust.setAttribute('aria-selected', 'true');
-      }
-      if (tabCat) {
-        tabCat.classList.remove('is-active');
-        tabCat.setAttribute('aria-selected', 'false');
-      }
-      if (paneCust) paneCust.classList.remove('is-hidden');
-      if (paneCat) paneCat.classList.add('is-hidden');
+    });
+
+    if (source === 'custom') {
       const titleInput = document.getElementById('create-custom-title');
       if (titleInput) setTimeout(() => titleInput.focus(), 100);
+    } else if (source === 'upload') {
+      const titleInput = document.getElementById('create-upload-title');
+      if (titleInput && uploadedFile) setTimeout(() => titleInput.focus(), 100);
     }
+  }
+
+  function setupUploadControls() {
+    const dropzone = document.getElementById('upload-dropzone');
+    const fileInput = document.getElementById('create-upload-input');
+    const btnRemove = document.getElementById('btn-upload-remove');
+    const btnBrowse = document.getElementById('btn-upload-browse');
+
+    if (!dropzone || !fileInput) return;
+
+    dropzone.addEventListener('click', () => {
+      fileInput.click();
+    });
+
+    if (btnBrowse) {
+      btnBrowse.addEventListener('click', (e) => {
+        e.stopPropagation();
+        fileInput.click();
+      });
+    }
+
+    dropzone.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter' || e.key === ' ') {
+        e.preventDefault();
+        fileInput.click();
+      }
+    });
+
+    fileInput.addEventListener('change', (e) => {
+      const files = e.target.files;
+      if (files && files.length > 0) {
+        handleFileSelected(files[0]);
+      }
+    });
+
+    // Drag and drop events
+    ['dragenter', 'dragover'].forEach(name => {
+      dropzone.addEventListener(name, (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        dropzone.classList.add('is-dragover');
+      });
+    });
+
+    ['dragleave', 'drop'].forEach(name => {
+      dropzone.addEventListener(name, (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        dropzone.classList.remove('is-dragover');
+      });
+    });
+
+    dropzone.addEventListener('drop', (e) => {
+      const dt = e.dataTransfer;
+      if (dt && dt.files && dt.files.length > 0) {
+        handleFileSelected(dt.files[0]);
+      }
+    });
+
+    if (btnRemove) {
+      btnRemove.addEventListener('click', (e) => {
+        e.stopPropagation();
+        clearUploadedFile();
+      });
+    }
+  }
+
+  async function handleFileSelected(file) {
+    if (!file) return;
+
+    // Validate video MIME / extension
+    const isVideo = file.type.startsWith('video/') || file.name.toLowerCase().endsWith('.mp4') || file.name.toLowerCase().endsWith('.webm');
+    if (!isVideo) {
+      showToast('Please select a valid MP4 or WebM video file', 'error');
+      return;
+    }
+
+    // Validate size (max 500MB)
+    const maxSize = 500 * 1024 * 1024;
+    if (file.size > maxSize) {
+      showToast('File size exceeds the 500MB limit', 'error');
+      return;
+    }
+
+    uploadedFile = file;
+    uploadedFileDuration = 0;
+
+    const dropzone = document.getElementById('upload-dropzone');
+    const selectedCard = document.getElementById('upload-selected-card');
+    const fileNameEl = document.getElementById('upload-file-name');
+    const fileMetaEl = document.getElementById('upload-file-meta');
+    const titleInput = document.getElementById('create-upload-title');
+
+    if (dropzone) dropzone.hidden = true;
+    if (selectedCard) selectedCard.hidden = false;
+    if (fileNameEl) fileNameEl.textContent = file.name;
+
+    const formattedSize = (file.size / (1024 * 1024)).toFixed(1) + ' MB';
+    if (fileMetaEl) fileMetaEl.textContent = `${formattedSize} · Calculating duration…`;
+
+    // Suggest clean title from filename if not yet filled
+    if (titleInput && !titleInput.value.trim()) {
+      const cleanName = file.name.replace(/\.[^/.]+$/, '').replace(/[-_]/g, ' ');
+      titleInput.value = cleanName;
+    }
+
+    // Extract video duration via local ObjectURL
+    try {
+      const dur = await extractVideoDuration(file);
+      uploadedFileDuration = dur;
+      if (fileMetaEl) {
+        fileMetaEl.textContent = `${formattedSize} · Duration: ${formatTime(dur)}`;
+      }
+    } catch (e) {
+      if (fileMetaEl) {
+        fileMetaEl.textContent = formattedSize;
+      }
+    }
+  }
+
+  function clearUploadedFile() {
+    uploadedFile = null;
+    uploadedFileDuration = 0;
+
+    const dropzone = document.getElementById('upload-dropzone');
+    const selectedCard = document.getElementById('upload-selected-card');
+    const fileInput = document.getElementById('create-upload-input');
+    const progressWrap = document.getElementById('upload-progress-wrap');
+
+    if (fileInput) fileInput.value = '';
+    if (dropzone) dropzone.hidden = false;
+    if (selectedCard) selectedCard.hidden = true;
+    if (progressWrap) progressWrap.hidden = true;
+  }
+
+  function extractVideoDuration(file) {
+    return new Promise((resolve) => {
+      const video = document.createElement('video');
+      video.preload = 'metadata';
+      const objUrl = URL.createObjectURL(file);
+      video.src = objUrl;
+
+      const cleanup = () => {
+        URL.revokeObjectURL(objUrl);
+      };
+
+      video.onloadedmetadata = () => {
+        const dur = video.duration || 0;
+        cleanup();
+        resolve(dur);
+      };
+
+      video.onerror = () => {
+        cleanup();
+        resolve(0);
+      };
+
+      setTimeout(() => {
+        cleanup();
+        resolve(0);
+      }, 5000);
+    });
   }
 
   async function loadMediaCatalog() {
@@ -683,6 +864,103 @@ const App = (() => {
     const options = {};
     if (activeMediaSource === 'catalog') {
       options.mediaAssetId = selectedAssetId || 'big-buck-bunny';
+    } else if (activeMediaSource === 'upload') {
+      if (!uploadedFile) {
+        showToast('Please select a video clip to upload', 'error');
+        submitBtn.classList.remove('btn--loading');
+        submitBtn.disabled = false;
+        return;
+      }
+
+      const uploadTitleInput = document.getElementById('create-upload-title');
+      const uploadTitleErr = document.getElementById('create-upload-title-error');
+      if (uploadTitleErr) uploadTitleErr.hidden = true;
+      if (uploadTitleInput) uploadTitleInput.classList.remove('input--error');
+
+      let uTitle = uploadTitleInput ? uploadTitleInput.value.trim() : '';
+      if (!uTitle) {
+        uTitle = uploadedFile.name.replace(/\.[^/.]+$/, '').replace(/[-_]/g, ' ');
+      }
+
+      if (uTitle.length < 2 || uTitle.length > 100 || /[<>]/.test(uTitle)) {
+        if (uploadTitleErr) {
+          uploadTitleErr.textContent = 'Please enter a valid title (2-100 characters)';
+          uploadTitleErr.hidden = false;
+        }
+        if (uploadTitleInput) uploadTitleInput.classList.add('input--error');
+        submitBtn.classList.remove('btn--loading');
+        submitBtn.disabled = false;
+        return;
+      }
+
+      // Step 1: Request presigned upload URL from backend
+      const progressWrap = document.getElementById('upload-progress-wrap');
+      const progressFill = document.getElementById('upload-progress-fill');
+      const progressText = document.getElementById('upload-progress-percent');
+      const progressLabel = document.getElementById('upload-progress-label');
+
+      if (progressWrap) progressWrap.hidden = false;
+      if (progressFill) progressFill.style.width = '0%';
+      if (progressText) progressText.textContent = '0%';
+      if (progressLabel) progressLabel.textContent = 'Preparing Cloudflare R2 Upload…';
+
+      let presign;
+      try {
+        await ensureSession();
+        presign = await API.presignUpload({
+          fileName: uploadedFile.name,
+          fileSize: uploadedFile.size,
+          contentType: uploadedFile.type || 'video/mp4',
+        });
+      } catch (err) {
+        if (progressWrap) progressWrap.hidden = true;
+        showToast(err.message || 'Failed to prepare video upload', 'error');
+        submitBtn.classList.remove('btn--loading');
+        submitBtn.disabled = false;
+        return;
+      }
+
+      // Step 2: Direct browser PUT to Cloudflare R2
+      try {
+        if (progressLabel) progressLabel.textContent = 'Direct Upload to Cloudflare R2…';
+        await new Promise((resolve, reject) => {
+          const xhr = new XMLHttpRequest();
+          xhr.open('PUT', presign.uploadUrl, true);
+          xhr.setRequestHeader('Content-Type', uploadedFile.type || 'video/mp4');
+
+          xhr.upload.onprogress = (e) => {
+            if (e.lengthComputable) {
+              const percent = Math.min(100, Math.round((e.loaded / e.total) * 100));
+              if (progressFill) progressFill.style.width = `${percent}%`;
+              if (progressText) progressText.textContent = `${percent}%`;
+            }
+          };
+
+          xhr.onload = () => {
+            if (xhr.status >= 200 && xhr.status < 300) {
+              resolve();
+            } else {
+              reject(new Error(`Direct upload failed with status ${xhr.status}`));
+            }
+          };
+
+          xhr.onerror = () => reject(new Error('Network error during video upload'));
+          xhr.send(uploadedFile);
+        });
+
+        if (progressLabel) progressLabel.textContent = 'Upload complete! Creating room…';
+      } catch (err) {
+        if (progressWrap) progressWrap.hidden = true;
+        showToast(err.message || 'Direct upload to R2 failed', 'error');
+        submitBtn.classList.remove('btn--loading');
+        submitBtn.disabled = false;
+        return;
+      }
+
+      options.mediaUrl = presign.streamUrl;
+      options.mediaTitle = uTitle;
+      options.durationSeconds = uploadedFileDuration;
+      options.mediaSourceType = 'upload';
     } else {
       const customTitleInput = document.getElementById('create-custom-title');
       const customUrlInput = document.getElementById('create-custom-url');
@@ -738,6 +1016,7 @@ const App = (() => {
       }
 
       closeModal('modal-create');
+      clearUploadedFile();
       if (roomNameInput) roomNameInput.value = '';
       enterLobby();
       showToast(`Room "${roomName}" (${roomCode}) created`, 'success');

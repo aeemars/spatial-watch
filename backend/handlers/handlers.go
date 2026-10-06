@@ -13,6 +13,7 @@ import (
 	"github.com/gorilla/mux"
 	gorillaWs "github.com/gorilla/websocket"
 	"spatialwatch/internal/auth"
+	"spatialwatch/internal/storage"
 	"spatialwatch/models"
 	"spatialwatch/repository"
 	ws "spatialwatch/websocket"
@@ -27,7 +28,13 @@ type Handler struct {
 	Hub            *ws.Hub
 	AuthService    *auth.AuthService
 	MediaAssetRepo *repository.MediaAssetRepo
+	Storage        storage.StorageService
 	upgrader       gorillaWs.Upgrader
+}
+
+// SetStorage configures the object storage service for the handler
+func (h *Handler) SetStorage(s storage.StorageService) {
+	h.Storage = s
 }
 
 // NewHandler creates a new handler with all dependencies
@@ -250,10 +257,13 @@ func (h *Handler) CreateRoom(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		mediaSourceType = "custom"
+		if req.MediaSourceType == "upload" || req.MediaSourceType == "r2_upload" {
+			mediaSourceType = req.MediaSourceType
+		}
 		resolvedAssetID = ""
 		resolvedMediaURL = validURL
 		resolvedMediaTitle = validTitle
-		resolvedDuration = 0
+		resolvedDuration = req.DurationSeconds
 	} else if mediaAssetID != "" {
 		if h.MediaAssetRepo == nil {
 			respondError(w, http.StatusInternalServerError, "Media catalog unavailable")
@@ -745,3 +755,82 @@ func respondJSON(w http.ResponseWriter, status int, data interface{}) {
 func respondError(w http.ResponseWriter, status int, message string) {
 	respondJSON(w, status, map[string]string{"error": message})
 }
+
+// PresignUploadRequest defines the payload for POST /api/media/presign-upload
+type PresignUploadRequest struct {
+	FileName    string `json:"fileName"`
+	FileSize    int64  `json:"fileSize"`
+	ContentType string `json:"contentType"`
+}
+
+// PresignUpload handles POST /api/media/presign-upload
+func (h *Handler) PresignUpload(w http.ResponseWriter, r *http.Request) {
+	authUser, ok := auth.GetAuthenticatedUser(r.Context())
+	if !ok || authUser == nil {
+		respondError(w, http.StatusUnauthorized, "Authentication required to upload media")
+		return
+	}
+
+	var req PresignUploadRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		respondError(w, http.StatusBadRequest, "Invalid request body")
+		return
+	}
+
+	// Validate content-type
+	cType := strings.ToLower(strings.TrimSpace(req.ContentType))
+	if cType == "" {
+		cType = "video/mp4"
+	}
+	if !strings.HasPrefix(cType, "video/") && cType != "application/mp4" {
+		respondError(w, http.StatusBadRequest, "Only video files (e.g. video/mp4) are supported")
+		return
+	}
+
+	// Validate file size (max 500MB = 524,288,000 bytes)
+	const maxFileSize = 500 * 1024 * 1024
+	if req.FileSize <= 0 {
+		respondError(w, http.StatusBadRequest, "File size must be greater than zero")
+		return
+	}
+	if req.FileSize > maxFileSize {
+		respondError(w, http.StatusBadRequest, "File exceeds maximum allowed size of 500MB")
+		return
+	}
+
+	// Determine file extension
+	ext := ".mp4"
+	if strings.Contains(req.FileName, ".") {
+		parts := strings.Split(req.FileName, ".")
+		extractedExt := "." + strings.ToLower(parts[len(parts)-1])
+		if extractedExt == ".mp4" || extractedExt == ".webm" || extractedExt == ".mov" {
+			ext = extractedExt
+		}
+	}
+
+	randomID, err := auth.GenerateUUIDv4()
+	if err != nil {
+		randomID = fmt.Sprintf("%d", time.Now().UnixNano())
+	}
+	key := fmt.Sprintf("uploads/%s%s", randomID, ext)
+
+	if h.Storage == nil {
+		respondError(w, http.StatusInternalServerError, "Storage service is not configured")
+		return
+	}
+
+	res, err := h.Storage.PresignPut(r.Context(), key, cType, req.FileSize, 15*time.Minute)
+	if err != nil {
+		log.Printf("[api] failed to generate presigned upload URL: %v", err)
+		respondError(w, http.StatusInternalServerError, "Failed to generate presigned upload URL")
+		return
+	}
+
+	respondJSON(w, http.StatusOK, res)
+}
+
+// MockUpload handles PUT /api/media/mock-upload/{key:.+} for local dev simulation
+func (h *Handler) MockUpload(w http.ResponseWriter, r *http.Request) {
+	w.WriteHeader(http.StatusOK)
+}
+

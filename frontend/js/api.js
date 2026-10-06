@@ -77,8 +77,15 @@ const API = (() => {
         if (options.mediaAssetId) payload.mediaAssetId = options.mediaAssetId;
         if (options.mediaUrl) payload.mediaUrl = options.mediaUrl;
         if (options.mediaTitle) payload.mediaTitle = options.mediaTitle;
+        if (options.durationSeconds) payload.durationSeconds = options.durationSeconds;
+        if (options.mediaSourceType) payload.mediaSourceType = options.mediaSourceType;
       }
       return request('POST', '/api/rooms', payload);
+    },
+
+    /** Request a presigned PUT URL for direct Cloudflare R2 uploads */
+    presignUpload(fileMeta) {
+      return request('POST', '/api/media/presign-upload', fileMeta);
     },
 
     /** Join an existing room (participant bound to authenticated session) */

@@ -19,6 +19,17 @@ type Config struct {
 	CookieDomain        string
 	CORSAllowedOrigins  []string
 	SessionDurationDays int
+	// Cloudflare R2 Object Storage
+	R2AccountID       string
+	R2AccessKeyID     string
+	R2SecretAccessKey string
+	R2BucketName      string
+	R2PublicURL       string
+}
+
+// IsR2Configured returns true if all necessary credentials for R2 are present
+func (c *Config) IsR2Configured() bool {
+	return c.R2AccountID != "" && c.R2AccessKeyID != "" && c.R2SecretAccessKey != "" && c.R2BucketName != ""
 }
 
 // Load reads configuration from environment variables
@@ -76,6 +87,11 @@ func Load() *Config {
 		CookieDomain:        getEnv("COOKIE_DOMAIN", ""),
 		CORSAllowedOrigins:  corsOrigins,
 		SessionDurationDays: sessionDuration,
+		R2AccountID:         getEnv("R2_ACCOUNT_ID", ""),
+		R2AccessKeyID:       getEnv("R2_ACCESS_KEY_ID", ""),
+		R2SecretAccessKey:   getEnv("R2_SECRET_ACCESS_KEY", ""),
+		R2BucketName:        getEnv("R2_BUCKET_NAME", "spatialwatch-media"),
+		R2PublicURL:         getEnv("R2_PUBLIC_URL", ""),
 	}
 }
 

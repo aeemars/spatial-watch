@@ -155,7 +155,13 @@ func ValidateCustomMedia(rawURL, rawTitle string) (string, string, error) {
 	}
 
 	u, err := url.Parse(trimmedURL)
-	if err != nil || u.Scheme != "https" || u.Host == "" {
+	if err != nil {
+		return "", "", ErrInvalidCustomMedia
+	}
+
+	isHTTPS := u.Scheme == "https" && u.Host != ""
+	isLocalDev := (u.Scheme == "http" && (u.Hostname() == "localhost" || u.Hostname() == "127.0.0.1")) || (u.Scheme == "" && strings.HasPrefix(trimmedURL, "/"))
+	if !isHTTPS && !isLocalDev {
 		return "", "", ErrInvalidCustomMedia
 	}
 

@@ -161,7 +161,11 @@
             <div class="media-source-tabs" role="tablist">
               <button class="media-tab is-active" id="tab-media-catalog" type="button" role="tab" aria-selected="true" aria-controls="pane-media-catalog">
                 <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="5 3 19 12 5 21 5 3"/></svg>
-                <span>Curated Short Films</span>
+                <span>Curated Films</span>
+              </button>
+              <button class="media-tab" id="tab-media-upload" type="button" role="tab" aria-selected="false" aria-controls="pane-media-upload">
+                <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
+                <span>Upload Clip (R2)</span>
               </button>
               <button class="media-tab" id="tab-media-custom" type="button" role="tab" aria-selected="false" aria-controls="pane-media-custom">
                 <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></svg>
@@ -180,7 +184,64 @@
               </div>
             </div>
 
-            <!-- Pane 2: Custom Hosted MP4 -->
+            <!-- Pane 2: Cloudflare R2 Direct Upload -->
+            <div class="media-pane is-hidden" id="pane-media-upload" role="tabpanel">
+              <div class="upload-media-form">
+                <input type="file" id="create-upload-input" accept="video/mp4,video/webm" style="display:none">
+
+                <div class="upload-dropzone" id="upload-dropzone" role="button" tabindex="0" aria-label="Drop or browse MP4 video clip">
+                  <div class="upload-dropzone__icon">
+                    <svg width="30" height="30" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
+                  </div>
+                  <div class="upload-dropzone__title">Drag & drop your video clip here</div>
+                  <div class="upload-dropzone__desc">Direct Cloudflare R2 Upload · MP4 up to 500MB</div>
+                  <button class="btn btn--secondary btn--xs upload-dropzone__btn" type="button" id="btn-upload-browse">Browse Video File</button>
+                </div>
+
+                <!-- Selected File Card -->
+                <div class="upload-selected-card" id="upload-selected-card" hidden>
+                  <div class="upload-selected__preview">
+                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="5 3 19 12 5 21 5 3"/></svg>
+                  </div>
+                  <div class="upload-selected__info">
+                    <div class="upload-selected__name" id="upload-file-name">my-clip.mp4</div>
+                    <div class="upload-selected__meta" id="upload-file-meta">0 MB · Calculating duration…</div>
+                  </div>
+                  <button class="btn btn--ghost btn--icon btn--xs upload-selected__remove" id="btn-upload-remove" type="button" aria-label="Remove selected video" title="Remove">
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+                  </button>
+                </div>
+
+                <!-- Title Input -->
+                <div class="form-group" style="margin-top: var(--space-3); margin-bottom: 0;">
+                  <label class="label label--sm" for="create-upload-title">Film / Clip Title</label>
+                  <input class="input input--sm" id="create-upload-title" type="text" placeholder="e.g., Independent Sci-Fi Short" maxlength="100">
+                  <p class="helper-text" id="create-upload-title-error" hidden></p>
+                </div>
+
+                <!-- Upload Progress -->
+                <div class="upload-progress-wrap" id="upload-progress-wrap" hidden>
+                  <div class="upload-progress-header">
+                    <span class="upload-progress-label" id="upload-progress-label">Direct Upload to Cloudflare R2…</span>
+                    <span class="upload-progress-percent" id="upload-progress-percent">0%</span>
+                  </div>
+                  <div class="upload-progress-bar">
+                    <div class="upload-progress-fill" id="upload-progress-fill" style="width: 0%;"></div>
+                  </div>
+                </div>
+
+                <div class="custom-media-notice">
+                  <div class="notice-icon">
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="16" x2="12" y2="12"/><line x1="12" y1="8" x2="12.01" y2="8"/></svg>
+                  </div>
+                  <div class="notice-text">
+                    <strong>Zero-Egress Direct Upload:</strong> Uploaded directly from your browser to Cloudflare R2 with zero server bandwidth bottleneck and guaranteed CORS range-streaming support.
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <!-- Pane 3: Custom Hosted MP4 -->
             <div class="media-pane is-hidden" id="pane-media-custom" role="tabpanel">
               <div class="custom-media-form">
                 <div class="form-group">

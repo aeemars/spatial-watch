@@ -15,6 +15,7 @@ import (
 	"spatialwatch/config"
 	"spatialwatch/handlers"
 	"spatialwatch/internal/auth"
+	"spatialwatch/internal/storage"
 	"spatialwatch/models"
 	"spatialwatch/repository"
 	"spatialwatch/seed"
@@ -41,12 +42,15 @@ func setupTestRig() *testRig {
 	cfg := &config.Config{
 		CookieSecure:        false,
 		SessionDurationDays: 30,
+		PublicBaseURL:       "http://localhost:8080",
 	}
 
 	authService := auth.NewAuthService(userRepo, sessionRepo, cfg)
 	seed.Run(commentRepo, mediaRepo)
 	hub := ws.NewHub(roomRepo, partRepo, reactionRepo)
 	h := handlers.NewHandler(roomRepo, partRepo, commentRepo, reactionRepo, hub, authService, mediaRepo, nil)
+	r2Storage, _ := storage.NewR2Storage(cfg)
+	h.SetStorage(r2Storage)
 
 	r := mux.NewRouter()
 	api := r.PathPrefix("/api").Subrouter()
@@ -63,6 +67,7 @@ func setupTestRig() *testRig {
 	protected.Use(auth.Middleware(authService))
 	protected.HandleFunc("/auth/profile", h.UpdateProfile).Methods("PATCH")
 	protected.HandleFunc("/user/rooms", h.GetUserRooms).Methods("GET")
+	protected.HandleFunc("/media/presign-upload", h.PresignUpload).Methods("POST")
 	protected.HandleFunc("/rooms", h.CreateRoom).Methods("POST")
 	protected.HandleFunc("/rooms/join", h.JoinRoom).Methods("POST")
 	protected.HandleFunc("/rooms/{roomCode}", h.ShutdownRoom).Methods("DELETE")
@@ -1056,5 +1061,145 @@ func TestRoomReaper_ShutsDownExpiredRooms(t *testing.T) {
 		t.Fatalf("Expected ACT01 IsActive to be true, got false")
 	}
 }
+
+func TestPresignedUpload_RequiresAuth(t *testing.T) {
+	rig := setupTestRig()
+
+	body, _ := json.Marshal(handlers.PresignUploadRequest{
+		FileName:    "clip.mp4",
+		FileSize:    1024 * 1024,
+		ContentType: "video/mp4",
+	})
+	req, _ := http.NewRequest("POST", "/api/media/presign-upload", bytes.NewBuffer(body))
+	req.Header.Set("Content-Type", "application/json")
+	rr := httptest.NewRecorder()
+	rig.Router.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusUnauthorized {
+		t.Fatalf("Expected 401 Unauthorized, got %d", rr.Code)
+	}
+}
+
+func TestPresignedUpload_RejectsInvalidContentType(t *testing.T) {
+	rig := setupTestRig()
+	_, cookie := createTestGuestSession(t, rig)
+
+	body, _ := json.Marshal(handlers.PresignUploadRequest{
+		FileName:    "image.png",
+		FileSize:    1024 * 1024,
+		ContentType: "image/png",
+	})
+	req, _ := http.NewRequest("POST", "/api/media/presign-upload", bytes.NewBuffer(body))
+	req.Header.Set("Content-Type", "application/json")
+	req.AddCookie(cookie)
+	rr := httptest.NewRecorder()
+	rig.Router.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusBadRequest {
+		t.Fatalf("Expected 400 Bad Request for image/png, got %d", rr.Code)
+	}
+}
+
+func TestPresignedUpload_RejectsOversizedFile(t *testing.T) {
+	rig := setupTestRig()
+	_, cookie := createTestGuestSession(t, rig)
+
+	body, _ := json.Marshal(handlers.PresignUploadRequest{
+		FileName:    "huge.mp4",
+		FileSize:    600 * 1024 * 1024, // 600MB > 500MB
+		ContentType: "video/mp4",
+	})
+	req, _ := http.NewRequest("POST", "/api/media/presign-upload", bytes.NewBuffer(body))
+	req.Header.Set("Content-Type", "application/json")
+	req.AddCookie(cookie)
+	rr := httptest.NewRecorder()
+	rig.Router.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusBadRequest {
+		t.Fatalf("Expected 400 Bad Request for file > 500MB, got %d", rr.Code)
+	}
+}
+
+func TestPresignedUpload_Success(t *testing.T) {
+	rig := setupTestRig()
+	_, cookie := createTestGuestSession(t, rig)
+
+	body, _ := json.Marshal(handlers.PresignUploadRequest{
+		FileName:    "short-film.mp4",
+		FileSize:    45 * 1024 * 1024,
+		ContentType: "video/mp4",
+	})
+	req, _ := http.NewRequest("POST", "/api/media/presign-upload", bytes.NewBuffer(body))
+	req.Header.Set("Content-Type", "application/json")
+	req.AddCookie(cookie)
+	rr := httptest.NewRecorder()
+	rig.Router.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("Expected 200 OK, got %d (body: %s)", rr.Code, rr.Body.String())
+	}
+
+	var resp storage.PresignResult
+	if err := json.Unmarshal(rr.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("Failed to parse presign result: %v", err)
+	}
+
+	if resp.UploadURL == "" {
+		t.Fatal("Expected non-empty UploadURL")
+	}
+	if resp.StreamURL == "" {
+		t.Fatal("Expected non-empty StreamURL")
+	}
+	if !strings.HasPrefix(resp.Key, "uploads/") || !strings.HasSuffix(resp.Key, ".mp4") {
+		t.Fatalf("Unexpected key format: %s", resp.Key)
+	}
+}
+
+func TestRoomCreation_WithUploadedMedia(t *testing.T) {
+	rig := setupTestRig()
+	_, cookie := createTestGuestSession(t, rig)
+
+	// Simulate room creation with an uploaded video stream URL and extracted duration
+	body, _ := json.Marshal(models.CreateRoomRequest{
+		RoomName:        "Indie Premiere",
+		MediaURL:        "https://media.spatialwatch.app/uploads/test-clip.mp4",
+		MediaTitle:      "My Drone Journey",
+		DurationSeconds: 420,
+		MediaSourceType: "upload",
+	})
+	req, _ := http.NewRequest("POST", "/api/rooms", bytes.NewBuffer(body))
+	req.Header.Set("Content-Type", "application/json")
+	req.AddCookie(cookie)
+	rr := httptest.NewRecorder()
+	rig.Router.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusCreated {
+		t.Fatalf("Expected 201 Created, got %d (body: %s)", rr.Code, rr.Body.String())
+	}
+
+	var resp models.CreateRoomResponse
+	if err := json.Unmarshal(rr.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("Failed to parse create room response: %v", err)
+	}
+
+	if resp.MediaSourceType != "upload" {
+		t.Fatalf("Expected mediaSourceType 'upload', got %q", resp.MediaSourceType)
+	}
+
+	// Verify room in repository has exact duration and correct ExpiresAt
+	room, err := rig.RoomRepo.FindByCode(context.Background(), resp.RoomCode)
+	if err != nil {
+		t.Fatalf("Failed to retrieve room: %v", err)
+	}
+
+	if room.DurationSeconds != 420 {
+		t.Fatalf("Expected DurationSeconds 420, got %f", room.DurationSeconds)
+	}
+	expectedMinExpiry := room.CreatedAt.Add(time.Duration(420+300) * time.Second)
+	if room.ExpiresAt.Before(expectedMinExpiry.Add(-2 * time.Second)) {
+		t.Fatalf("ExpiresAt %v is earlier than expected minimum %v", room.ExpiresAt, expectedMinExpiry)
+	}
+}
+
 
 

@@ -20,6 +20,7 @@ import (
 	"spatialwatch/config"
 	"spatialwatch/handlers"
 	"spatialwatch/internal/auth"
+	"spatialwatch/internal/storage"
 	"spatialwatch/repository"
 	"spatialwatch/seed"
 	ws "spatialwatch/websocket"
@@ -89,6 +90,17 @@ func main() {
 	// Initialize handlers
 	handler := handlers.NewHandler(roomRepo, partRepo, commentRepo, reactionRepo, hub, authService, mediaAssetRepo, cfg.CORSAllowedOrigins)
 
+	// Initialize Cloudflare R2 object storage client
+	r2Storage, err := storage.NewR2Storage(cfg)
+	if err != nil {
+		log.Printf("R2 storage initialization warning: %v", err)
+	} else if r2Storage.IsConfigured() {
+		log.Printf("  Storage: Cloudflare R2 active (bucket: %s)", cfg.R2BucketName)
+	} else {
+		log.Println("  Storage: Local development simulation mode")
+	}
+	handler.SetStorage(r2Storage)
+
 	// Set up router
 	r := mux.NewRouter()
 
@@ -110,10 +122,14 @@ func main() {
 	protected.Use(auth.Middleware(authService))
 	protected.HandleFunc("/auth/profile", handler.UpdateProfile).Methods("PATCH", "OPTIONS")
 	protected.HandleFunc("/user/rooms", handler.GetUserRooms).Methods("GET", "OPTIONS")
+	protected.HandleFunc("/media/presign-upload", handler.PresignUpload).Methods("POST", "OPTIONS")
 	protected.HandleFunc("/rooms", handler.CreateRoom).Methods("POST", "OPTIONS")
 	protected.HandleFunc("/rooms/join", handler.JoinRoom).Methods("POST", "OPTIONS")
 	protected.HandleFunc("/rooms/{roomCode}", handler.ShutdownRoom).Methods("DELETE", "OPTIONS")
 	protected.HandleFunc("/rooms/{roomCode}/leave", handler.LeaveRoom).Methods("POST", "OPTIONS")
+
+	// Dev simulation endpoint for local direct uploads
+	api.HandleFunc("/media/mock-upload/{key:.+}", handler.MockUpload).Methods("PUT", "OPTIONS")
 
 	// Public room info and commentary
 	api.HandleFunc("/rooms/{roomCode}", handler.GetRoom).Methods("GET", "OPTIONS")
