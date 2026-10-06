@@ -227,6 +227,37 @@ func (r *RoomRepo) Shutdown(ctx context.Context, code string) error {
 	return mongo.ErrNoDocuments
 }
 
+// FindExpiredActive returns all active rooms whose ExpiresAt is non-zero and <= now
+func (r *RoomRepo) FindExpiredActive(ctx context.Context, now time.Time) ([]models.Room, error) {
+	if r.col != nil {
+		filter := bson.M{
+			"isActive":  bson.M{"$ne": false},
+			"expiresAt": bson.M{"$gt": time.Time{}, "$lte": now},
+		}
+		cursor, err := r.col.Find(ctx, filter)
+		if err != nil {
+			return nil, err
+		}
+		defer cursor.Close(ctx)
+
+		var rooms []models.Room
+		if err := cursor.All(ctx, &rooms); err != nil {
+			return nil, err
+		}
+		return rooms, nil
+	}
+
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	var rooms []models.Room
+	for _, room := range r.memoryRooms {
+		if room.IsActive && !room.ExpiresAt.IsZero() && !room.ExpiresAt.After(now) {
+			rooms = append(rooms, *room)
+		}
+	}
+	return rooms, nil
+}
+
 // FindByCode retrieves a room by its code
 func (r *RoomRepo) FindByCode(ctx context.Context, code string) (*models.Room, error) {
 	upper := strings.ToUpper(code)

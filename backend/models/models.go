@@ -88,6 +88,8 @@ type Room struct {
 	PlaybackPositionSeconds float64       `bson:"playbackPositionSeconds" json:"playbackPositionSeconds"`
 	IsPaused                bool          `bson:"isPaused" json:"isPaused"`
 	DirectorCutEnabled      bool          `bson:"directorCutEnabled" json:"directorCutEnabled"`
+	ExpiresAt               time.Time     `bson:"expiresAt,omitempty" json:"expiresAt,omitempty"`
+	IsCompleted             bool          `bson:"isCompleted,omitempty" json:"isCompleted,omitempty"`
 	CreatedAt               time.Time     `bson:"createdAt" json:"createdAt"`
 	UpdatedAt               time.Time     `bson:"updatedAt" json:"updatedAt"`
 }
@@ -170,6 +172,7 @@ type UserRoomRecord struct {
 	MediaTitle        string    `json:"mediaTitle"`
 	MediaURL          string    `json:"mediaUrl"`
 	DurationSeconds   float64   `json:"durationSeconds,omitempty"`
+	ExpiresAt         time.Time `json:"expiresAt,omitempty"`
 	ParticipantCount  int       `json:"participantCount"`
 	CreatedAt         time.Time `json:"createdAt"`
 	JoinedAt          time.Time `json:"joinedAt,omitempty"`

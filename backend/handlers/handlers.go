@@ -286,6 +286,15 @@ func (h *Handler) CreateRoom(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	var expiresAt time.Time
+	if resolvedDuration > 0 {
+		// Film duration + 5 minutes grace buffer for pausing/buffering
+		expiresAt = time.Now().Add(time.Duration(resolvedDuration+300) * time.Second)
+	} else {
+		// Fallback max lifespan (2 hours)
+		expiresAt = time.Now().Add(2 * time.Hour)
+	}
+
 	room := &models.Room{
 		RoomCode:                roomCode,
 		Name:                    validRoomName,
@@ -299,6 +308,9 @@ func (h *Handler) CreateRoom(w http.ResponseWriter, r *http.Request) {
 		PlaybackPositionSeconds: 0,
 		IsPaused:                true,
 		DirectorCutEnabled:      false,
+		ExpiresAt:               expiresAt,
+		CreatedAt:               time.Now(),
+		UpdatedAt:               time.Now(),
 	}
 	if err := h.RoomRepo.Create(ctx, room); err != nil {
 		log.Printf("[api] failed to create room: %v", err)
@@ -474,6 +486,7 @@ func (h *Handler) GetUserRooms(w http.ResponseWriter, r *http.Request) {
 			MediaTitle:        mediaTitle,
 			MediaURL:          room.MediaURL,
 			DurationSeconds:   room.DurationSeconds,
+			ExpiresAt:         room.ExpiresAt,
 			ParticipantCount:  len(parts),
 			CreatedAt:         room.CreatedAt,
 			IsHost:            true,
@@ -537,6 +550,7 @@ func (h *Handler) GetUserRooms(w http.ResponseWriter, r *http.Request) {
 			MediaTitle:        mediaTitle,
 			MediaURL:          room.MediaURL,
 			DurationSeconds:   room.DurationSeconds,
+			ExpiresAt:         room.ExpiresAt,
 			ParticipantCount:  len(parts),
 			CreatedAt:         room.CreatedAt,
 			JoinedAt:          joinedAtMap[codeUpper],

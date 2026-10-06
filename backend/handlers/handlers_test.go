@@ -8,6 +8,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/gorilla/mux"
 	"github.com/gorilla/websocket"
@@ -961,4 +962,99 @@ func TestGetRoom_AutoHealsLegacy403MediaURL(t *testing.T) {
 		t.Fatalf("Expected repository to persist healed URL %q, got %q (err: %v)", expectedHealedURL, savedRoom.MediaURL, err)
 	}
 }
+
+func TestRoom_ExpiresAtCalculation(t *testing.T) {
+	rig := setupTestRig()
+	_, cookie := createTestGuestSession(t, rig)
+
+	// Create room with a known catalog asset (big-buck-bunny, 596s)
+	body, _ := json.Marshal(models.CreateRoomRequest{
+		RoomName:     "Ephemeral Test Room",
+		MediaAssetID: "big-buck-bunny",
+	})
+	req, _ := http.NewRequest("POST", "/api/rooms", bytes.NewBuffer(body))
+	req.Header.Set("Content-Type", "application/json")
+	req.AddCookie(cookie)
+	rr := httptest.NewRecorder()
+	rig.Router.ServeHTTP(rr, req)
+	if rr.Code != http.StatusCreated {
+		t.Fatalf("Expected 201 Created, got %d", rr.Code)
+	}
+
+	var createResp models.CreateRoomResponse
+	_ = json.Unmarshal(rr.Body.Bytes(), &createResp)
+
+	room, err := rig.RoomRepo.FindByCode(context.Background(), createResp.RoomCode)
+	if err != nil {
+		t.Fatalf("Room should exist: %v", err)
+	}
+
+	if room.ExpiresAt.IsZero() {
+		t.Fatalf("Expected non-zero ExpiresAt for room, got %v", room.ExpiresAt)
+	}
+	if !room.ExpiresAt.After(room.CreatedAt) {
+		t.Fatalf("ExpiresAt (%v) must be strictly after CreatedAt (%v)", room.ExpiresAt, room.CreatedAt)
+	}
+}
+
+func TestRoomReaper_ShutsDownExpiredRooms(t *testing.T) {
+	rig := setupTestRig()
+	ctx := context.Background()
+
+	// Seed an active room with an expired ExpiresAt
+	pastTime := time.Now().Add(-10 * time.Minute)
+	expiredRoom := &models.Room{
+		RoomCode:        "EXP01",
+		Name:            "Expired Screening",
+		MediaTitle:      "Old Clip",
+		MediaURL:        "/assets/videos/big-buck-bunny.mp4",
+		DurationSeconds: 60,
+		IsActive:        true,
+		CreatedAt:       pastTime.Add(-1 * time.Hour),
+		ExpiresAt:       pastTime,
+	}
+	if err := rig.RoomRepo.Create(ctx, expiredRoom); err != nil {
+		t.Fatalf("Failed to seed expired room: %v", err)
+	}
+
+	// Seed a currently active room with a future ExpiresAt
+	futureRoom := &models.Room{
+		RoomCode:        "ACT01",
+		Name:            "Active Screening",
+		MediaTitle:      "Active Clip",
+		MediaURL:        "/assets/videos/big-buck-bunny.mp4",
+		DurationSeconds: 600,
+		IsActive:        true,
+		CreatedAt:       time.Now(),
+		ExpiresAt:       time.Now().Add(10 * time.Minute),
+	}
+	if err := rig.RoomRepo.Create(ctx, futureRoom); err != nil {
+		t.Fatalf("Failed to seed active room: %v", err)
+	}
+
+	// Run ReapExpiredRooms
+	reapedCount := rig.Handler.ReapExpiredRooms(ctx)
+	if reapedCount != 1 {
+		t.Fatalf("Expected exactly 1 room to be reaped, got %d", reapedCount)
+	}
+
+	// Verify EXP01 is no longer active
+	foundExp, err := rig.RoomRepo.FindByCode(ctx, "EXP01")
+	if err != nil {
+		t.Fatalf("Failed to find room EXP01: %v", err)
+	}
+	if foundExp.IsActive {
+		t.Fatalf("Expected EXP01 IsActive to be false, got true")
+	}
+
+	// Verify ACT01 remains active
+	foundAct, err := rig.RoomRepo.FindByCode(ctx, "ACT01")
+	if err != nil {
+		t.Fatalf("Failed to find room ACT01: %v", err)
+	}
+	if !foundAct.IsActive {
+		t.Fatalf("Expected ACT01 IsActive to be true, got false")
+	}
+}
+
 

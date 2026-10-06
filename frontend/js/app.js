@@ -199,6 +199,10 @@ const App = (() => {
     document.getElementById('btn-cinema-dc').addEventListener('click', handleToggleDirectorCut);
     document.getElementById('btn-cinema-exit').addEventListener('click', leaveRoom);
     document.getElementById('btn-enter-vr').addEventListener('click', () => XR.enterVR());
+    const btnClosingExit = document.getElementById('btn-cinema-closing-exit');
+    if (btnClosingExit) {
+      btnClosingExit.addEventListener('click', () => finalizeScreeningShutdown());
+    }
 
     // Progress bar
     const progressBar = document.getElementById('cinema-progress');
@@ -968,6 +972,9 @@ const App = (() => {
           XR.enterVR();
         }
       });
+      Cinema.onEnded(() => {
+        handleScreeningEnded();
+      });
 
       // Update cinema UI
       document.getElementById('cinema-room-code').textContent = roomCode;
@@ -1046,7 +1053,7 @@ const App = (() => {
     showToast(newState ? 'Director\'s Cut enabled' : 'Director\'s Cut disabled', 'success');
   }
 
-  // ─── Time Display Updater ─────────────────────────
+  // ─── Time Display & Screening Countdown Updater ───
 
   let timeUpdaterInterval = null;
 
@@ -1056,12 +1063,36 @@ const App = (() => {
       const current = Cinema.getCurrentTime();
       const duration = Cinema.getDuration();
 
-      document.getElementById('cinema-time-current').textContent = formatTime(current);
-      document.getElementById('cinema-time-duration').textContent = formatTime(duration);
+      const currentEl = document.getElementById('cinema-time-current');
+      if (currentEl) currentEl.textContent = formatTime(current);
+      const durationEl = document.getElementById('cinema-time-duration');
+      if (durationEl) durationEl.textContent = formatTime(duration);
 
       const progressBar = document.getElementById('cinema-progress');
-      if (duration > 0) {
+      if (duration > 0 && progressBar) {
         progressBar.value = (current / duration) * 100;
+      }
+
+      // Live screening countdown chip in top-bar HUD
+      const remainingSeconds = Math.max(0, duration - current);
+      const countdownTextEl = document.getElementById('cinema-countdown-text');
+      const countdownChipEl = document.getElementById('cinema-countdown-chip');
+      if (countdownTextEl) {
+        countdownTextEl.textContent = duration > 0 ? formatTime(remainingSeconds) : '--:--';
+      }
+      if (countdownChipEl) {
+        if (duration > 0 && remainingSeconds <= 30 && remainingSeconds > 0) {
+          countdownChipEl.classList.add('is-expiring');
+        } else {
+          countdownChipEl.classList.remove('is-expiring');
+        }
+      }
+
+      // Screening completion detection (graceful 5s countdown)
+      const videoEl = Cinema.getVideo();
+      const isEnded = videoEl && videoEl.ended;
+      if (duration > 0 && (remainingSeconds <= 0.4 || isEnded) && !isClosingSequenceActive) {
+        handleScreeningEnded();
       }
     }, 250);
   }
@@ -1071,6 +1102,76 @@ const App = (() => {
       clearInterval(timeUpdaterInterval);
       timeUpdaterInterval = null;
     }
+  }
+
+  // ─── Graceful Screening Auto-Shutdown ──────────────
+
+  let isClosingSequenceActive = false;
+  let closingCountdownTimer = null;
+
+  function handleScreeningEnded() {
+    if (isClosingSequenceActive) return;
+    isClosingSequenceActive = true;
+
+    // Pause playback & stop updates
+    Cinema.pause();
+    stopTimeUpdater();
+
+    // Show Graceful Closing Overlay
+    const overlay = document.getElementById('cinema-closing-overlay');
+    const countdownNum = document.getElementById('cinema-closing-countdown');
+    const countdownSecs = document.getElementById('cinema-closing-secs');
+    const progressFill = document.getElementById('cinema-closing-progress-fill');
+
+    let secondsLeft = 5;
+    if (overlay) overlay.hidden = false;
+    if (countdownNum) countdownNum.textContent = secondsLeft;
+    if (countdownSecs) countdownSecs.textContent = secondsLeft;
+    if (progressFill) progressFill.style.width = '100%';
+
+    if (closingCountdownTimer) clearInterval(closingCountdownTimer);
+    closingCountdownTimer = setInterval(() => {
+      secondsLeft -= 1;
+      if (countdownNum) countdownNum.textContent = Math.max(0, secondsLeft);
+      if (countdownSecs) countdownSecs.textContent = Math.max(0, secondsLeft);
+      if (progressFill) {
+        progressFill.style.width = `${Math.max(0, (secondsLeft / 5) * 100)}%`;
+      }
+
+      if (secondsLeft <= 0) {
+        clearInterval(closingCountdownTimer);
+        closingCountdownTimer = null;
+        finalizeScreeningShutdown();
+      }
+    }, 1000);
+  }
+
+  async function finalizeScreeningShutdown() {
+    const targetRoomCode = roomCode;
+    const isCurrentHost = isHost;
+
+    cleanupClosingOverlay();
+
+    if (isCurrentHost && targetRoomCode) {
+      try {
+        await API.shutdownRoom(targetRoomCode);
+      } catch (err) {
+        console.warn('[cinema] Auto-shutdown API call warning:', err);
+      }
+    }
+
+    leaveRoom(true);
+    showToast('🎬 Screening complete. Thank you for watching!', 'info');
+  }
+
+  function cleanupClosingOverlay() {
+    if (closingCountdownTimer) {
+      clearInterval(closingCountdownTimer);
+      closingCountdownTimer = null;
+    }
+    isClosingSequenceActive = false;
+    const overlay = document.getElementById('cinema-closing-overlay');
+    if (overlay) overlay.hidden = true;
   }
 
   // ─── Controls Auto-Hide ───────────────────────────
@@ -1259,6 +1360,10 @@ const App = (() => {
   // ─── Leave Room & Navigation ─────────────────────
 
   function leaveRoom(silent = false) {
+    cleanupClosingOverlay();
+    if (window.XR && typeof XR.isInVR === 'function' && XR.isInVR()) {
+      XR.exitVR();
+    }
     WS.disconnect();
     stopTimeUpdater();
     DirectorsCut.stopChecking();
@@ -1460,6 +1565,9 @@ const App = (() => {
     const rName = room.name || 'Screening Room';
     const rCode = room.roomCode || room.code || '';
 
+    const isExpired = room.expiresAt && !room.expiresAt.startsWith('0001') && (new Date(room.expiresAt).getTime() < Date.now());
+    const isConcluded = (room.isActive === false) || room.isCompleted || isExpired;
+
     card.innerHTML = `
       <div class="record-card__header">
         <div class="record-card__title-group">
@@ -1471,6 +1579,7 @@ const App = (() => {
           </div>
         </div>
         <div class="record-card__badge-wrap">
+          ${isConcluded ? '<span class="chip chip--xs chip--secondary">Concluded</span>' : ''}
           ${isCardHost ? '<span class="badge badge--host">Host</span>' : '<span class="chip chip--xs chip--presence">Guest</span>'}
         </div>
       </div>
@@ -1480,21 +1589,39 @@ const App = (() => {
           <span>${escapeHtml(mediaTitle)}</span>
         </div>
         <div class="record-card__actions">
-          ${isCardHost ? `
-            <button class="btn btn--danger-ghost btn--sm btn-card-shutdown" type="button" data-code="${escapeHtml(rCode)}" data-name="${escapeHtml(rName)}">
-              Shutdown
-            </button>
-            <button class="btn btn--primary btn--sm btn-card-reenter" type="button" data-code="${escapeHtml(rCode)}" data-host="true">
-              Re-enter
-            </button>
-          ` : `
-            <button class="btn btn--danger-ghost btn--sm btn-card-leave" type="button" data-code="${escapeHtml(rCode)}" data-name="${escapeHtml(rName)}">
-              Leave
-            </button>
-            <button class="btn btn--primary btn--sm btn-card-reenter" type="button" data-code="${escapeHtml(rCode)}" data-host="false">
-              Re-enter
-            </button>
-          `}
+          ${isConcluded ? (
+            isCardHost ? `
+              <button class="btn btn--danger-ghost btn--sm btn-card-shutdown" type="button" data-code="${escapeHtml(rCode)}" data-name="${escapeHtml(rName)}">
+                Remove
+              </button>
+              <button class="btn btn--ghost btn--sm" type="button" disabled style="opacity:0.5;cursor:not-allowed">
+                Concluded
+              </button>
+            ` : `
+              <button class="btn btn--danger-ghost btn--sm btn-card-leave" type="button" data-code="${escapeHtml(rCode)}" data-name="${escapeHtml(rName)}">
+                Remove
+              </button>
+              <button class="btn btn--ghost btn--sm" type="button" disabled style="opacity:0.5;cursor:not-allowed">
+                Concluded
+              </button>
+            `
+          ) : (
+            isCardHost ? `
+              <button class="btn btn--danger-ghost btn--sm btn-card-shutdown" type="button" data-code="${escapeHtml(rCode)}" data-name="${escapeHtml(rName)}">
+                Shutdown
+              </button>
+              <button class="btn btn--primary btn--sm btn-card-reenter" type="button" data-code="${escapeHtml(rCode)}" data-host="true">
+                Re-enter
+              </button>
+            ` : `
+              <button class="btn btn--danger-ghost btn--sm btn-card-leave" type="button" data-code="${escapeHtml(rCode)}" data-name="${escapeHtml(rName)}">
+                Leave
+              </button>
+              <button class="btn btn--primary btn--sm btn-card-reenter" type="button" data-code="${escapeHtml(rCode)}" data-host="false">
+                Re-enter
+              </button>
+            `
+          )}
         </div>
       </div>
     `;

@@ -25,6 +25,7 @@ const Cinema = (() => {
   ];
 
   let isMediaReadyState = false;
+  let onEndedCallback = null;
 
   function init(mediaUrl, hostStatus, onReadyCallback, onErrorCallback) {
     isHost = hostStatus;
@@ -39,6 +40,7 @@ const Cinema = (() => {
     // Set up video with CORS and lifecycle hooks
     video.crossOrigin = 'anonymous';
     video.preload = 'metadata';
+    video.loop = false;
 
     video.onloadedmetadata = () => {
       isMediaReadyState = true;
@@ -47,6 +49,12 @@ const Cinema = (() => {
       if (window.XR && typeof XR.setMediaReady === 'function') {
         XR.setMediaReady(true, { duration: video.duration });
       }
+    };
+
+    video.onended = () => {
+      isPlaying = false;
+      updatePlayPauseIcon(false);
+      if (typeof onEndedCallback === 'function') onEndedCallback();
     };
 
     video.onerror = (e) => {
@@ -78,7 +86,7 @@ const Cinema = (() => {
       throw new Error('3D Cinema engine (Three.js) is not available');
     }
 
-    video.loop = true;
+    video.loop = false;
 
     scene = new THREE.Scene();
     scene.background = new THREE.Color(0x050710);
@@ -466,6 +474,7 @@ const Cinema = (() => {
 
   function destroy() {
     window.removeEventListener('resize', onResize);
+    onEndedCallback = null;
     if (renderer) {
       renderer.setAnimationLoop(null);
       renderer.dispose();
@@ -492,6 +501,7 @@ const Cinema = (() => {
     preloadMedia,
     showMediaError,
     hideMediaError,
+    onEnded: (cb) => { onEndedCallback = cb; },
     getVideo: () => video,
     isPlaying: () => isPlaying,
     isMediaReady: () => isMediaReadyState,

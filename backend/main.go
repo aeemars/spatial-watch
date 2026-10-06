@@ -133,6 +133,9 @@ func main() {
 	}
 	r.PathPrefix("/").Handler(http.FileServer(http.Dir(frontendDir)))
 
+	// Start background room reaper to auto-shutdown rooms when their duration expires
+	stopReaper := handler.StartRoomReaper(15 * time.Second)
+
 	// Create server
 	srv := &http.Server{
 		Addr:         fmt.Sprintf(":%d", cfg.Port),
@@ -149,6 +152,7 @@ func main() {
 		<-sigChan
 
 		log.Println("Shutting down gracefully...")
+		stopReaper()
 		shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer shutdownCancel()
 		srv.Shutdown(shutdownCtx)

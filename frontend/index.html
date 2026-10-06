@@ -497,6 +497,10 @@
             <span class="cinema-controls__name" id="cinema-room-name"></span>
             <span class="cinema-controls__code" id="cinema-room-code">SW-XXXX</span>
             <span class="badge badge--count" id="cinema-participant-badge">0</span>
+            <span class="chip chip--gold chip--xs cinema-countdown-chip" id="cinema-countdown-chip" title="Screening time remaining">
+              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
+              <span id="cinema-countdown-text">--:--</span>
+            </span>
           </div>
           <div class="cinema-controls__top-actions">
             <button class="btn btn--ghost btn--icon" id="btn-cinema-dc" type="button" aria-label="Toggle Director's Cut" title="Director's Cut">
@@ -580,6 +584,31 @@
           <div class="cinema-error__actions">
             <button class="btn btn--primary btn--md" id="btn-cinema-error-back" type="button">
               Return to Lobby
+            </button>
+          </div>
+        </div>
+      </div>
+
+      <!-- Graceful Closing Overlay (5-second countdown) -->
+      <div class="cinema-closing-overlay" id="cinema-closing-overlay" hidden>
+        <div class="cinema-closing-card">
+          <div class="cinema-closing__icon">
+            <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="5 3 19 12 5 21 5 3"/><line x1="19" y1="5" x2="19" y2="19"/></svg>
+          </div>
+          <h3 class="cinema-closing__title">Screening Complete</h3>
+          <p class="cinema-closing__subtitle">The film has concluded. Thank you for watching together!</p>
+          <div class="cinema-closing__timer-wrap">
+            <div class="cinema-closing__ring">
+              <span class="cinema-closing__number" id="cinema-closing-countdown">5</span>
+            </div>
+            <div class="cinema-closing__progress-bar">
+              <div class="cinema-closing__progress-fill" id="cinema-closing-progress-fill"></div>
+            </div>
+            <p class="cinema-closing__caption">Room closing in <span id="cinema-closing-secs">5</span>s…</p>
+          </div>
+          <div class="cinema-closing__actions">
+            <button class="btn btn--secondary btn--sm" id="btn-cinema-closing-exit" type="button">
+              Leave Now
             </button>
           </div>
         </div>
