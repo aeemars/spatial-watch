@@ -19,6 +19,11 @@ const WS = (() => {
   }
 
   function connect() {
+    if (!roomCode) {
+      console.warn('[ws] connect aborted: missing roomCode');
+      return;
+    }
+
     if (socket && (socket.readyState === WebSocket.OPEN || socket.readyState === WebSocket.CONNECTING)) {
       return;
     }
@@ -130,7 +135,13 @@ const WS = (() => {
   return {
     /** Initialize and connect */
     init(code) {
-      roomCode = code;
+      if (!code) {
+        console.error('[ws] cannot initialize with empty roomCode');
+        return;
+      }
+      this.disconnect();
+      roomCode = code.trim().toUpperCase();
+      intentionalClose = false;
       connect();
     },
 
@@ -147,8 +158,22 @@ const WS = (() => {
     disconnect() {
       intentionalClose = true;
       stopPing();
-      if (reconnectTimer) clearTimeout(reconnectTimer);
-      if (socket) socket.close();
+      if (reconnectTimer) {
+        clearTimeout(reconnectTimer);
+        reconnectTimer = null;
+      }
+      reconnectAttempts = 0;
+      if (socket) {
+        socket.onopen = null;
+        socket.onmessage = null;
+        socket.onerror = null;
+        socket.onclose = null;
+        try {
+          socket.close(1000, 'Intentional disconnect');
+        } catch (e) {}
+        socket = null;
+      }
+      emit('status', { state: 'disconnected' });
     },
 
     /** Check if connected */

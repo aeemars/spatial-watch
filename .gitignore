@@ -65,7 +65,13 @@ yarn-error.log*
 pnpm-debug.log*
 .pnpm-debug.log*
 
+# User uploaded media clips (preserves zero-bloat repository)
+frontend/assets/uploads/*
+!frontend/assets/uploads/.gitkeep
+
 
 plan.md
 
 prompt.md
+
+todo.md

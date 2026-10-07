@@ -5,8 +5,11 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"log"
 	"net/http"
+	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -279,6 +282,9 @@ func (h *Handler) CreateRoom(w http.ResponseWriter, r *http.Request) {
 		resolvedMediaURL = asset.MediaURL
 		resolvedMediaTitle = asset.Title
 		resolvedDuration = asset.DurationSeconds
+		if req.DurationSeconds > 0 {
+			resolvedDuration = req.DurationSeconds
+		}
 	} else {
 		// Default screening: Big Buck Bunny from catalog or fallback
 		mediaSourceType = "catalog"
@@ -294,12 +300,15 @@ func (h *Handler) CreateRoom(w http.ResponseWriter, r *http.Request) {
 				resolvedDuration = asset.DurationSeconds
 			}
 		}
+		if req.DurationSeconds > 0 {
+			resolvedDuration = req.DurationSeconds
+		}
 	}
 
 	var expiresAt time.Time
 	if resolvedDuration > 0 {
-		// Film duration + 5 minutes grace buffer for pausing/buffering
-		expiresAt = time.Now().Add(time.Duration(resolvedDuration+300) * time.Second)
+		// Base lifetime of 2 hours, plus the film duration and 5 min buffer
+		expiresAt = time.Now().Add(2*time.Hour + time.Duration(resolvedDuration+300)*time.Second)
 	} else {
 		// Fallback max lifespan (2 hours)
 		expiresAt = time.Now().Add(2 * time.Hour)
@@ -316,7 +325,7 @@ func (h *Handler) CreateRoom(w http.ResponseWriter, r *http.Request) {
 		MediaURL:                resolvedMediaURL,
 		DurationSeconds:         resolvedDuration,
 		PlaybackPositionSeconds: 0,
-		IsPaused:                true,
+		IsPaused:                false,
 		DirectorCutEnabled:      false,
 		ExpiresAt:               expiresAt,
 		CreatedAt:               time.Now(),
@@ -833,6 +842,39 @@ func (h *Handler) PresignUpload(w http.ResponseWriter, r *http.Request) {
 
 // MockUpload handles PUT /api/media/mock-upload/{key:.+} for local dev simulation
 func (h *Handler) MockUpload(w http.ResponseWriter, r *http.Request) {
+	vars := mux.Vars(r)
+	rawKey := vars["key"]
+	cleanName := filepath.Base(rawKey)
+	if cleanName == "." || cleanName == "/" || cleanName == "" {
+		cleanName = fmt.Sprintf("upload-%d.mp4", time.Now().UnixNano())
+	}
+
+	uploadDir := filepath.Join("frontend", "assets", "uploads")
+	if _, err := os.Stat(uploadDir); os.IsNotExist(err) {
+		uploadDir = filepath.Join("..", "frontend", "assets", "uploads")
+	}
+	if err := os.MkdirAll(uploadDir, 0755); err != nil {
+		log.Printf("[upload] failed to create upload directory %s: %v", uploadDir, err)
+		respondError(w, http.StatusInternalServerError, "Failed to create upload directory")
+		return
+	}
+
+	targetPath := filepath.Join(uploadDir, cleanName)
+	outFile, err := os.Create(targetPath)
+	if err != nil {
+		log.Printf("[upload] failed to create file %s: %v", targetPath, err)
+		respondError(w, http.StatusInternalServerError, "Failed to create destination file")
+		return
+	}
+	defer outFile.Close()
+
+	if _, err := io.Copy(outFile, r.Body); err != nil {
+		log.Printf("[upload] failed to save video payload to %s: %v", targetPath, err)
+		respondError(w, http.StatusInternalServerError, "Failed to save uploaded video")
+		return
+	}
+
+	log.Printf("[upload] local dev simulated upload saved successfully: %s", targetPath)
 	w.WriteHeader(http.StatusOK)
 }
 

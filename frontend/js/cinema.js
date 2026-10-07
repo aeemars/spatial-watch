@@ -243,12 +243,18 @@ const Cinema = (() => {
     video.onloadedmetadata = handleLoadedMetadata;
     video.onerror = handleError;
 
-    if (video.src !== mediaUrl) {
+    const rawUrl = new URL(mediaUrl, window.location.href).href;
+    const separator = rawUrl.includes('?') ? '&' : '?';
+    const resolvedUrl = rawUrl + separator + '_cb=' + Date.now();
+
+    if (video.src !== resolvedUrl) {
       isMediaReadyState = false;
-      video.src = mediaUrl;
+      video.src = resolvedUrl;
       video.load();
     } else if (video.readyState >= 1) {
       handleLoadedMetadata();
+    } else if (video.error) {
+      handleError();
     }
   }
 
@@ -475,6 +481,14 @@ const Cinema = (() => {
   function destroy() {
     window.removeEventListener('resize', onResize);
     onEndedCallback = null;
+    isMediaReadyState = false;
+    if (video) {
+      video.pause();
+      video.removeAttribute('src');
+      video.load();
+      video.onloadedmetadata = null;
+      video.onerror = null;
+    }
     if (renderer) {
       renderer.setAnimationLoop(null);
       renderer.dispose();

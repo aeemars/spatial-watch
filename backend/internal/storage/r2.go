@@ -3,6 +3,7 @@ package storage
 import (
 	"context"
 	"fmt"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -104,8 +105,9 @@ func (s *R2Storage) GetStreamURL(key string) string {
 	if s.isConfigured {
 		return fmt.Sprintf("https://%s.r2.cloudflarestorage.com/%s/%s", s.accountID, s.bucket, key)
 	}
-	// Dev fallback
-	return fmt.Sprintf("%s/assets/uploads/%s", strings.TrimRight(s.publicBaseURL, "/"), key)
+	// Dev fallback: stream from local static /assets/uploads/<filename>
+	cleanName := filepath.Base(key)
+	return fmt.Sprintf("/assets/uploads/%s", cleanName)
 }
 
 // PresignPut generates a presigned URL allowing the browser to directly PUT the file into R2
@@ -129,10 +131,9 @@ func (s *R2Storage) PresignPut(ctx context.Context, key string, contentType stri
 	}
 
 	putInput := &s3.PutObjectInput{
-		Bucket:        aws.String(s.bucket),
-		Key:           aws.String(key),
-		ContentType:   aws.String(contentType),
-		ContentLength: aws.Int64(contentLength),
+		Bucket:      aws.String(s.bucket),
+		Key:         aws.String(key),
+		ContentType: aws.String(contentType),
 	}
 
 	presignedReq, err := s.presignClient.PresignPutObject(ctx, putInput, s3.WithPresignExpires(lifetime))

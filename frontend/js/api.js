@@ -88,6 +88,44 @@ const API = (() => {
       return request('POST', '/api/media/presign-upload', fileMeta);
     },
 
+    /** Upload a video file to the backend for faststart optimization and R2 upload */
+    uploadFastStart(formData, onProgress) {
+      return new Promise((resolve, reject) => {
+        const xhr = new XMLHttpRequest();
+        xhr.open('POST', `${API_BASE_URL}/api/media/upload-faststart`, true);
+        
+        // Include session credentials
+        xhr.withCredentials = true;
+
+        xhr.upload.onprogress = (e) => {
+          if (e.lengthComputable && onProgress) {
+            onProgress((e.loaded / e.total) * 100);
+          }
+        };
+
+        xhr.onload = () => {
+          if (xhr.status >= 200 && xhr.status < 300) {
+            try {
+              const res = JSON.parse(xhr.responseText);
+              resolve(res);
+            } catch (err) {
+              resolve({});
+            }
+          } else {
+            let errorMsg = 'Upload failed';
+            try {
+              const res = JSON.parse(xhr.responseText);
+              if (res.error) errorMsg = res.error;
+            } catch (e) {}
+            reject(new Error(errorMsg));
+          }
+        };
+
+        xhr.onerror = () => reject(new Error('Network error during upload'));
+        xhr.send(formData);
+      });
+    },
+
     /** Join an existing room (participant bound to authenticated session) */
     joinRoom(roomCode, displayName) {
       return request('POST', '/api/rooms/join', { roomCode, displayName });

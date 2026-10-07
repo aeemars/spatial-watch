@@ -732,6 +732,9 @@ const App = (() => {
       if (Array.isArray(assets) && assets.length > 0) {
         catalogAssets = assets;
         renderCatalogCards(assets);
+
+        // Dynamically probe video files to display exact real-time duration & details
+        probeAndEnrichCatalog(assets);
       }
     } catch (e) {
       console.warn('[app] failed to load media catalog:', e);
@@ -744,6 +747,78 @@ const App = (() => {
         `;
       }
     }
+  }
+
+  async function probeAndEnrichCatalog(assets) {
+    let changed = false;
+    
+    // Mark as probing initially so UI shows Calculating...
+    assets.forEach(a => {
+      a.isProbing = true;
+    });
+    renderCatalogCards(assets);
+
+    for (const asset of assets) {
+      if (!asset.mediaUrl) {
+        asset.isProbing = false;
+        continue;
+      }
+      try {
+        const info = await probeVideoUrl(asset.mediaUrl);
+        asset.isProbing = false;
+        
+        if (info) {
+          if (info.duration && info.duration > 0) {
+            asset.durationSeconds = Math.round(info.duration);
+          }
+          if (info.resolution) asset.resolution = info.resolution;
+          if (info.sizeMB) asset.sizeMB = info.sizeMB;
+          changed = true;
+          // Render individually as each finishes
+          renderCatalogCards(assets);
+        }
+      } catch (e) {
+        asset.isProbing = false;
+        renderCatalogCards(assets);
+      }
+    }
+  }
+
+  function probeVideoUrl(url) {
+    return new Promise(async (resolve) => {
+      let sizeMB = null;
+      try {
+        // Fetch file size via HEAD request
+        const resp = await fetch(url, { method: 'HEAD' });
+        const len = resp.headers.get('content-length');
+        if (len) {
+          sizeMB = (parseInt(len, 10) / (1024 * 1024)).toFixed(1) + ' MB';
+        }
+      } catch (e) {
+        // Ignore fetch errors
+      }
+
+      const v = document.createElement('video');
+      v.preload = 'metadata';
+      const resolved = new URL(url, window.location.href).href;
+      v.src = resolved;
+
+      const finish = () => {
+        const dur = (v.duration && !isNaN(v.duration) && v.duration > 0) ? v.duration : 0;
+        const width = v.videoWidth || 0;
+        const height = v.videoHeight || 0;
+        v.src = '';
+        resolve({
+          duration: dur,
+          resolution: (width && height) ? `${width}x${height}` : '',
+          sizeMB: sizeMB
+        });
+      };
+
+      v.onloadedmetadata = finish;
+      v.onerror = () => finish();
+      setTimeout(finish, 8000); // 8 second timeout
+    });
   }
 
   function renderCatalogCards(assets) {
@@ -763,11 +838,21 @@ const App = (() => {
       card.dataset.assetId = asset.assetId;
 
       const gradient = asset.gradient || 'linear-gradient(135deg, #1c2331, #0e111a)';
-      const durStr = formatTime(asset.durationSeconds);
+      
+      let metaBadge = '';
+      if (asset.isProbing) {
+        metaBadge = 'Calculating duration…';
+      } else {
+        const parts = [];
+        if (asset.sizeMB) parts.push(asset.sizeMB);
+        parts.push(`Duration: ${formatTime(asset.durationSeconds)}`);
+        if (asset.resolution) parts.push(asset.resolution);
+        metaBadge = parts.join(' · ');
+      }
 
       card.innerHTML = `
         <div class="catalog-card__thumb" style="background: ${gradient}">
-          <span class="catalog-card__duration">${durStr}</span>
+          <span class="catalog-card__duration">${metaBadge}</span>
           ${asset.directorCutAvailable ? '<span class="catalog-card__dc-badge">DC</span>' : ''}
           <div class="catalog-card__check">
             <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>
@@ -863,7 +948,11 @@ const App = (() => {
     // Resolve media options
     const options = {};
     if (activeMediaSource === 'catalog') {
-      options.mediaAssetId = selectedAssetId || 'big-buck-bunny';
+      options.mediaAssetId = selectedAssetId || (catalogAssets.length > 0 ? catalogAssets[0].assetId : 'coffee-run');
+      const chosen = catalogAssets.find(a => a.assetId === options.mediaAssetId);
+      if (chosen && chosen.durationSeconds) {
+        options.durationSeconds = chosen.durationSeconds;
+      }
     } else if (activeMediaSource === 'upload') {
       if (!uploadedFile) {
         showToast('Please select a video clip to upload', 'error');
@@ -893,7 +982,7 @@ const App = (() => {
         return;
       }
 
-      // Step 1: Request presigned upload URL from backend
+      // Step 1: Upload via Backend for Fast Start optimization
       const progressWrap = document.getElementById('upload-progress-wrap');
       const progressFill = document.getElementById('upload-progress-fill');
       const progressText = document.getElementById('upload-progress-percent');
@@ -902,15 +991,17 @@ const App = (() => {
       if (progressWrap) progressWrap.hidden = false;
       if (progressFill) progressFill.style.width = '0%';
       if (progressText) progressText.textContent = '0%';
-      if (progressLabel) progressLabel.textContent = 'Preparing Cloudflare R2 Upload…';
+      if (progressLabel) progressLabel.textContent = 'Optimizing and Uploading...';
 
       let presign;
       try {
         await ensureSession();
-        presign = await API.presignUpload({
-          fileName: uploadedFile.name,
-          fileSize: uploadedFile.size,
-          contentType: uploadedFile.type || 'video/mp4',
+        const formData = new FormData();
+        formData.append('video', uploadedFile);
+        
+        presign = await API.uploadFastStart(formData, (percent) => {
+          if (progressFill) progressFill.style.width = `${Math.round(percent)}%`;
+          if (progressText) progressText.textContent = `${Math.round(percent)}%`;
         });
       } catch (err) {
         if (progressWrap) progressWrap.hidden = true;
@@ -920,42 +1011,8 @@ const App = (() => {
         return;
       }
 
-      // Step 2: Direct browser PUT to Cloudflare R2
-      try {
-        if (progressLabel) progressLabel.textContent = 'Direct Upload to Cloudflare R2…';
-        await new Promise((resolve, reject) => {
-          const xhr = new XMLHttpRequest();
-          xhr.open('PUT', presign.uploadUrl, true);
-          xhr.setRequestHeader('Content-Type', uploadedFile.type || 'video/mp4');
+      if (progressLabel) progressLabel.textContent = 'Upload complete! Creating room…';
 
-          xhr.upload.onprogress = (e) => {
-            if (e.lengthComputable) {
-              const percent = Math.min(100, Math.round((e.loaded / e.total) * 100));
-              if (progressFill) progressFill.style.width = `${percent}%`;
-              if (progressText) progressText.textContent = `${percent}%`;
-            }
-          };
-
-          xhr.onload = () => {
-            if (xhr.status >= 200 && xhr.status < 300) {
-              resolve();
-            } else {
-              reject(new Error(`Direct upload failed with status ${xhr.status}`));
-            }
-          };
-
-          xhr.onerror = () => reject(new Error('Network error during video upload'));
-          xhr.send(uploadedFile);
-        });
-
-        if (progressLabel) progressLabel.textContent = 'Upload complete! Creating room…';
-      } catch (err) {
-        if (progressWrap) progressWrap.hidden = true;
-        showToast(err.message || 'Direct upload to R2 failed', 'error');
-        submitBtn.classList.remove('btn--loading');
-        submitBtn.disabled = false;
-        return;
-      }
 
       options.mediaUrl = presign.streamUrl;
       options.mediaTitle = uTitle;
@@ -1166,7 +1223,10 @@ const App = (() => {
 
       const sourceBadge = document.getElementById('lobby-source-badge');
       if (sourceBadge) {
-        if (room.mediaSourceType === 'custom') {
+        if (room.mediaSourceType === 'upload' || room.mediaSourceType === 'r2_upload') {
+          sourceBadge.textContent = 'Uploaded Clip';
+          sourceBadge.className = 'badge badge--source badge--source-custom';
+        } else if (room.mediaSourceType === 'custom') {
           sourceBadge.textContent = 'Custom MP4';
           sourceBadge.className = 'badge badge--source badge--source-custom';
         } else {
@@ -1177,7 +1237,12 @@ const App = (() => {
 
       const mediaMetaEl = document.getElementById('lobby-media-meta');
       if (mediaMetaEl) {
-        const sourceType = room.mediaSourceType === 'custom' ? 'Custom Hosted MP4' : 'Curated Short Film';
+        let sourceType = 'Curated Short Film';
+        if (room.mediaSourceType === 'upload' || room.mediaSourceType === 'r2_upload') {
+          sourceType = 'Uploaded Video Clip';
+        } else if (room.mediaSourceType === 'custom') {
+          sourceType = 'Custom Hosted MP4';
+        }
         const durStr = room.durationSeconds ? formatTime(room.durationSeconds) : '';
         mediaMetaEl.textContent = durStr ? `${sourceType} · ${durStr}` : sourceType;
       }
@@ -1643,6 +1708,9 @@ const App = (() => {
     if (window.XR && typeof XR.isInVR === 'function' && XR.isInVR()) {
       XR.exitVR();
     }
+    if (window.XR && typeof XR.setMediaReady === 'function') {
+      XR.setMediaReady(false);
+    }
     WS.disconnect();
     stopTimeUpdater();
     DirectorsCut.stopChecking();
@@ -1925,12 +1993,15 @@ const App = (() => {
   async function reenterRoom(code, asHostRole) {
     closeModal('modal-records');
 
+    const targetCode = (code || '').toUpperCase().trim();
+    if (!targetCode) return;
+
     try {
       if (asHostRole) {
         // As host, verify room state and resume
-        const data = await API.getRoom(code);
+        const data = await API.getRoom(targetCode);
         const room = data.room;
-        roomCode = room.code;
+        roomCode = room.roomCode || targetCode;
         roomName = room.name || '';
         hostParticipantId = room.hostParticipantId;
         isHost = true;
@@ -1940,8 +2011,8 @@ const App = (() => {
       } else {
         // As guest, re-join with existing display name
         const nameToUse = (currentUser && currentUser.displayName) ? currentUser.displayName : (displayName || 'Guest');
-        const data = await API.joinRoom(code, nameToUse);
-        roomCode = data.roomCode;
+        const data = await API.joinRoom(targetCode, nameToUse);
+        roomCode = data.roomCode || targetCode;
         roomName = data.name || '';
         participantId = data.participantId;
         isHost = false;

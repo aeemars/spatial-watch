@@ -8,7 +8,7 @@ const XR = (() => {
   let xrSession = null;
   let xrSupported = false;
   let handSupported = false;
-  let mediaReady = false;
+  let mediaReady = null;
   let controllerGrips = [];
   let handModels = [];
   let uiPanel = null;
@@ -117,9 +117,12 @@ const XR = (() => {
 
       // Enter button
       if (enterBtn && enterLabel) {
-        if (mediaReady) {
+        if (mediaReady === true) {
           enterBtn.disabled = false;
           enterLabel.textContent = 'Enter VR Cinema';
+        } else if (mediaReady === false) {
+          enterBtn.disabled = true;
+          enterLabel.textContent = 'Media Stream Error - Check File';
         } else {
           enterBtn.disabled = true;
           enterLabel.textContent = 'Preparing Media Stream…';
@@ -147,9 +150,12 @@ const XR = (() => {
 
       // Enter button for desktop preview
       if (enterBtn && enterLabel) {
-        if (mediaReady) {
+        if (mediaReady === true) {
           enterBtn.disabled = false;
           enterLabel.textContent = 'Enter Cinema (Desktop Preview)';
+        } else if (mediaReady === false) {
+          enterBtn.disabled = true;
+          enterLabel.textContent = 'Media Stream Error - Check File';
         } else {
           enterBtn.disabled = true;
           enterLabel.textContent = 'Preparing Media Stream…';
@@ -485,3 +491,5 @@ const XR = (() => {
     isMediaReady: () => mediaReady,
   };
 })();
+
+window.XR = XR;
