@@ -850,8 +850,12 @@ const App = (() => {
         metaBadge = parts.join(' · ');
       }
 
+      const bgStyle = asset.posterUrl 
+        ? `background: url('${asset.posterUrl}') center/cover no-repeat;`
+        : `background: ${gradient};`;
+
       card.innerHTML = `
-        <div class="catalog-card__thumb" style="background: ${gradient}">
+        <div class="catalog-card__thumb" style="${bgStyle}">
           <span class="catalog-card__duration">${metaBadge}</span>
           ${asset.directorCutAvailable ? '<span class="catalog-card__dc-badge">DC</span>' : ''}
           <div class="catalog-card__check">

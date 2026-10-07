@@ -62,7 +62,7 @@ func NewDefaultLimiter() *Limiter {
 			Name:   "create_room",
 			Method: http.MethodPost,
 			Path:   "/api/rooms",
-			Limit:  500,
+			Limit:  5,
 			Window: 5 * time.Minute,
 		},
 		{
