@@ -1192,6 +1192,19 @@
   transform: translateY(-1px);
 }
 
+.record-card.is-expired {
+  opacity: 0.6;
+  filter: grayscale(0.6);
+  background: var(--surface-0);
+  border-color: rgba(255, 255, 255, 0.05);
+}
+
+.record-card.is-expired:hover {
+  opacity: 0.8;
+  transform: none;
+  border-color: rgba(255, 255, 255, 0.1);
+}
+
 .record-card__header {
   display: flex;
   align-items: flex-start;

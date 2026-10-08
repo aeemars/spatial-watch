@@ -1842,8 +1842,23 @@ const App = (() => {
     try {
       await ensureSession();
       const data = await API.getUserRooms();
-      const createdRooms = data.createdRooms || [];
-      const joinedRooms = data.joinedRooms || [];
+      let createdRooms = data.createdRooms || [];
+      let joinedRooms = data.joinedRooms || [];
+
+      // Sort: active rooms first, then by date descending
+      const sortRooms = (a, b) => {
+        const aIsExpired = a.isActive === false || a.isCompleted || (a.expiresAt && !a.expiresAt.startsWith('0001') && (new Date(a.expiresAt).getTime() < Date.now()));
+        const bIsExpired = b.isActive === false || b.isCompleted || (b.expiresAt && !b.expiresAt.startsWith('0001') && (new Date(b.expiresAt).getTime() < Date.now()));
+        
+        if (aIsExpired !== bIsExpired) return aIsExpired ? 1 : -1;
+        
+        const dateA = new Date(a.createdAt).getTime();
+        const dateB = new Date(b.createdAt).getTime();
+        return dateB - dateA;
+      };
+
+      createdRooms.sort(sortRooms);
+      joinedRooms.sort(sortRooms);
 
       // Update badge counters
       const badgeCreated = document.getElementById('badge-created-count');
@@ -1919,6 +1934,10 @@ const App = (() => {
     const isExpired = room.expiresAt && !room.expiresAt.startsWith('0001') && (new Date(room.expiresAt).getTime() < Date.now());
     const isConcluded = (room.isActive === false) || room.isCompleted || isExpired;
 
+    if (isConcluded) {
+      card.classList.add('is-expired');
+    }
+
     card.innerHTML = `
       <div class="record-card__header">
         <div class="record-card__title-group">
@@ -1930,7 +1949,7 @@ const App = (() => {
           </div>
         </div>
         <div class="record-card__badge-wrap">
-          ${isConcluded ? '<span class="chip chip--xs chip--secondary">Concluded</span>' : ''}
+          ${isConcluded ? '<span class="chip chip--xs" style="color:var(--text-amber);border-color:rgba(217,119,6,0.3)">EXPIRED</span>' : ''}
           ${isCardHost ? '<span class="badge badge--host">Host</span>' : '<span class="chip chip--xs chip--presence">Guest</span>'}
         </div>
       </div>
@@ -1946,14 +1965,14 @@ const App = (() => {
                 Remove
               </button>
               <button class="btn btn--ghost btn--sm" type="button" disabled style="opacity:0.5;cursor:not-allowed">
-                Concluded
+                Details
               </button>
             ` : `
               <button class="btn btn--danger-ghost btn--sm btn-card-leave" type="button" data-code="${escapeHtml(rCode)}" data-name="${escapeHtml(rName)}">
                 Remove
               </button>
               <button class="btn btn--ghost btn--sm" type="button" disabled style="opacity:0.5;cursor:not-allowed">
-                Concluded
+                Details
               </button>
             `
           ) : (
