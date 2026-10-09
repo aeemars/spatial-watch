@@ -116,8 +116,15 @@ func (h *Handler) UploadFastStart(w http.ResponseWriter, r *http.Request) {
 
 	client := &http.Client{}
 	respPut, err := client.Do(reqPut)
-	if err != nil || respPut.StatusCode != http.StatusOK {
-		log.Printf("[upload] upload to R2 failed: err=%v, status=%d", err, respPut.StatusCode)
+	if err != nil {
+		log.Printf("[upload] upload to R2 failed: err=%v", err)
+		respondError(w, http.StatusInternalServerError, "Failed to upload to R2")
+		return
+	}
+	defer respPut.Body.Close()
+	
+	if respPut.StatusCode != http.StatusOK {
+		log.Printf("[upload] upload to R2 failed: status=%d", respPut.StatusCode)
 		respondError(w, http.StatusInternalServerError, "Failed to upload to R2")
 		return
 	}

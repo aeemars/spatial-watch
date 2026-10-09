@@ -118,13 +118,12 @@ func (r *RoomRepo) ExistsActiveByName(ctx context.Context, name string) (bool, e
 	return false, nil
 }
 
-// FindByHost returns active rooms created by the host, ordered newest first
+// FindByHost returns all rooms (active and inactive) created by the host, ordered newest first
 func (r *RoomRepo) FindByHost(ctx context.Context, hostParticipantID string) ([]models.Room, error) {
 	if r.col != nil {
 		opts := options.Find().SetSort(bson.D{{Key: "createdAt", Value: -1}})
 		filter := bson.M{
 			"hostParticipantId": hostParticipantID,
-			"isActive":          bson.M{"$ne": false},
 		}
 		cursor, err := r.col.Find(ctx, filter, opts)
 		if err != nil {
@@ -143,7 +142,7 @@ func (r *RoomRepo) FindByHost(ctx context.Context, hostParticipantID string) ([]
 	defer r.mu.RUnlock()
 	var rooms []models.Room
 	for _, room := range r.memoryRooms {
-		if room.IsActive && room.HostParticipantID == hostParticipantID {
+		if room.HostParticipantID == hostParticipantID {
 			rooms = append(rooms, *room)
 		}
 	}
@@ -153,8 +152,8 @@ func (r *RoomRepo) FindByHost(ctx context.Context, hostParticipantID string) ([]
 	return rooms, nil
 }
 
-// FindActiveByCodes returns all active rooms matching the given room codes
-func (r *RoomRepo) FindActiveByCodes(ctx context.Context, codes []string) ([]models.Room, error) {
+// FindByCodes returns all rooms matching the given room codes
+func (r *RoomRepo) FindByCodes(ctx context.Context, codes []string) ([]models.Room, error) {
 	if len(codes) == 0 {
 		return []models.Room{}, nil
 	}
@@ -168,7 +167,6 @@ func (r *RoomRepo) FindActiveByCodes(ctx context.Context, codes []string) ([]mod
 		opts := options.Find().SetSort(bson.D{{Key: "createdAt", Value: -1}})
 		filter := bson.M{
 			"roomCode": bson.M{"$in": upperCodes},
-			"isActive": bson.M{"$ne": false},
 		}
 		cursor, err := r.col.Find(ctx, filter, opts)
 		if err != nil {
@@ -192,7 +190,7 @@ func (r *RoomRepo) FindActiveByCodes(ctx context.Context, codes []string) ([]mod
 
 	var rooms []models.Room
 	for _, room := range r.memoryRooms {
-		if room.IsActive && codeSet[strings.ToUpper(room.RoomCode)] {
+		if codeSet[strings.ToUpper(room.RoomCode)] {
 			rooms = append(rooms, *room)
 		}
 	}

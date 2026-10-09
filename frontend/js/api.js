@@ -89,10 +89,10 @@ const API = (() => {
     },
 
     /** Upload a video file to the backend for faststart optimization and R2 upload */
-    uploadFastStart(formData, onProgress) {
+    uploadFastStart(formData, onProgress, isRetry = false) {
       return new Promise((resolve, reject) => {
         const xhr = new XMLHttpRequest();
-        xhr.open('POST', `${API_BASE_URL}/api/media/upload-faststart`, true);
+        xhr.open('POST', `${BASE}/api/media/upload-faststart`, true);
         
         // Include session credentials
         xhr.withCredentials = true;
@@ -104,6 +104,15 @@ const API = (() => {
         };
 
         xhr.onload = () => {
+          if (xhr.status === 401 && !isRetry) {
+            // Auto-recovery on 401: session might have expired
+            getSession()
+              .then(() => API.uploadFastStart(formData, onProgress, true))
+              .then(resolve)
+              .catch(reject);
+            return;
+          }
+
           if (xhr.status >= 200 && xhr.status < 300) {
             try {
               const res = JSON.parse(xhr.responseText);

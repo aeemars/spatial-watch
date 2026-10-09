@@ -986,7 +986,7 @@ const App = (() => {
         return;
       }
 
-      // Step 1: Upload via Backend for Fast Start optimization
+      // Step 1: Request presigned upload URL from backend or do faststart fallback
       const progressWrap = document.getElementById('upload-progress-wrap');
       const progressFill = document.getElementById('upload-progress-fill');
       const progressText = document.getElementById('upload-progress-percent');
@@ -995,18 +995,77 @@ const App = (() => {
       if (progressWrap) progressWrap.hidden = false;
       if (progressFill) progressFill.style.width = '0%';
       if (progressText) progressText.textContent = '0%';
-      if (progressLabel) progressLabel.textContent = 'Optimizing and Uploading...';
+      if (progressLabel) progressLabel.textContent = 'Analyzing video file…';
+
+      // Quick check if file is already streaming-optimized (moov before mdat)
+      const isFastStart = async (file) => {
+        return new Promise((resolve) => {
+          const chunk = file.slice(0, 5 * 1024 * 1024); // Check first 5MB
+          const reader = new FileReader();
+          reader.onload = (e) => {
+            try {
+              const view = new DataView(e.target.result);
+              let offset = 0, moovFound = false, mdatFound = false;
+              while (offset < view.byteLength - 8) {
+                const size = view.getUint32(offset);
+                if (size < 8) break;
+                const type = String.fromCharCode(view.getUint8(offset+4), view.getUint8(offset+5), view.getUint8(offset+6), view.getUint8(offset+7));
+                if (type === 'moov') moovFound = true;
+                if (type === 'mdat') mdatFound = true;
+                if (moovFound && !mdatFound) return resolve(true);
+                if (mdatFound && !moovFound) return resolve(false);
+                offset += size;
+              }
+              resolve(false);
+            } catch (err) { resolve(false); }
+          };
+          reader.onerror = () => resolve(false);
+          reader.readAsArrayBuffer(chunk);
+        });
+      };
 
       let presign;
       try {
         await ensureSession();
-        const formData = new FormData();
-        formData.append('video', uploadedFile);
-        
-        presign = await API.uploadFastStart(formData, (percent) => {
-          if (progressFill) progressFill.style.width = `${Math.round(percent)}%`;
-          if (progressText) progressText.textContent = `${Math.round(percent)}%`;
-        });
+        const optimized = await isFastStart(uploadedFile);
+
+        if (optimized) {
+          if (progressLabel) progressLabel.textContent = 'Zero-Egress Direct Upload to R2…';
+          presign = await API.presignUpload({
+            fileName: uploadedFile.name,
+            fileSize: uploadedFile.size,
+            contentType: uploadedFile.type || 'video/mp4',
+          });
+
+          await new Promise((resolve, reject) => {
+            const xhr = new XMLHttpRequest();
+            xhr.open('PUT', presign.uploadUrl, true);
+            xhr.setRequestHeader('Content-Type', uploadedFile.type || 'video/mp4');
+
+            xhr.upload.onprogress = (e) => {
+              if (e.lengthComputable) {
+                const percent = Math.min(100, Math.round((e.loaded / e.total) * 100));
+                if (progressFill) progressFill.style.width = `${percent}%`;
+                if (progressText) progressText.textContent = `${percent}%`;
+              }
+            };
+            xhr.onload = () => {
+              if (xhr.status >= 200 && xhr.status < 300) resolve();
+              else reject(new Error(`Direct upload failed with status ${xhr.status}`));
+            };
+            xhr.onerror = () => reject(new Error('Network error during video upload'));
+            xhr.send(uploadedFile);
+          });
+        } else {
+          if (progressLabel) progressLabel.textContent = 'Optimizing and Uploading (Backend fallback)…';
+          const formData = new FormData();
+          formData.append('video', uploadedFile);
+          
+          presign = await API.uploadFastStart(formData, (percent) => {
+            if (progressFill) progressFill.style.width = `${Math.round(percent)}%`;
+            if (progressText) progressText.textContent = `${Math.round(percent)}%`;
+          });
+        }
       } catch (err) {
         if (progressWrap) progressWrap.hidden = true;
         showToast(err.message || 'Failed to prepare video upload', 'error');

@@ -465,7 +465,7 @@ func (h *Handler) GetRoom(w http.ResponseWriter, r *http.Request) {
 }
 
 // GetUserRooms handles GET /api/user/rooms (Protected by auth middleware)
-// Returns active rooms created by the user and active rooms joined by the user for continued access
+// Returns all rooms (active and inactive) created by the user and joined by the user for record purposes
 func (h *Handler) GetUserRooms(w http.ResponseWriter, r *http.Request) {
 	authUser, ok := auth.GetAuthenticatedUser(r.Context())
 	if !ok {
@@ -486,10 +486,17 @@ func (h *Handler) GetUserRooms(w http.ResponseWriter, r *http.Request) {
 
 	createdRecords := make([]models.UserRoomRecord, 0, len(createdRooms))
 	createdCodes := make(map[string]bool, len(createdRooms))
+
+	var createdCodeList []string
+	for _, room := range createdRooms {
+		createdCodeList = append(createdCodeList, room.RoomCode)
+	}
+	createdParticipantsMap, _ := h.PartRepo.FindParticipantsByRooms(ctx, createdCodeList)
+
 	for _, room := range createdRooms {
 		codeUpper := strings.ToUpper(room.RoomCode)
 		createdCodes[codeUpper] = true
-		parts, _ := h.PartRepo.FindByRoom(ctx, room.RoomCode)
+		parts := createdParticipantsMap[codeUpper]
 		mediaTitle := models.FormatMediaTitle(room.MediaTitle, room.MediaURL)
 		sourceType := room.MediaSourceType
 		if sourceType == "" {
@@ -535,16 +542,19 @@ func (h *Handler) GetUserRooms(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// 3. Fetch active room entities for joined codes
-	joinedRooms, err := h.RoomRepo.FindActiveByCodes(ctx, joinedCodes)
+	joinedRooms, err := h.RoomRepo.FindByCodes(ctx, joinedCodes)
 	if err != nil {
 		log.Printf("[api] failed to fetch joined room entities: %v", err)
 		respondError(w, http.StatusInternalServerError, "Failed to fetch room records")
 		return
 	}
 
+	joinedParticipantsMap, _ := h.PartRepo.FindParticipantsByRooms(ctx, joinedCodes)
+
 	joinedRecords := make([]models.UserRoomRecord, 0, len(joinedRooms))
 	for _, room := range joinedRooms {
-		parts, _ := h.PartRepo.FindByRoom(ctx, room.RoomCode)
+		codeUpper := strings.ToUpper(room.RoomCode)
+		parts := joinedParticipantsMap[codeUpper]
 		hostName := "Host"
 		for _, part := range parts {
 			if part.ParticipantID == room.HostParticipantID {
@@ -553,7 +563,6 @@ func (h *Handler) GetUserRooms(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 
-		codeUpper := strings.ToUpper(room.RoomCode)
 		mediaTitle := models.FormatMediaTitle(room.MediaTitle, room.MediaURL)
 		sourceType := room.MediaSourceType
 		if sourceType == "" {

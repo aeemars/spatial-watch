@@ -135,7 +135,6 @@ func TestWSEventValidation(t *testing.T) {
 
 func TestHostAuthorization(t *testing.T) {
 	room := &models.Room{
-		RoomCode:          "SW-AB23",
 		HostParticipantID: "p_host123",
 	}
 

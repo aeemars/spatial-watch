@@ -117,6 +117,55 @@ func (r *ParticipantRepo) FindByRoom(ctx context.Context, roomCode string) ([]mo
 	return participants, nil
 }
 
+// FindParticipantsByRooms retrieves active participants for multiple rooms and groups them by room code
+func (r *ParticipantRepo) FindParticipantsByRooms(ctx context.Context, roomCodes []string) (map[string][]models.Participant, error) {
+	result := make(map[string][]models.Participant)
+	if len(roomCodes) == 0 {
+		return result, nil
+	}
+
+	upperCodes := make([]string, len(roomCodes))
+	for i, code := range roomCodes {
+		upperCodes[i] = strings.ToUpper(code)
+	}
+
+	if r.col != nil {
+		cursor, err := r.col.Find(ctx, bson.M{
+			"roomCode": bson.M{"$in": upperCodes},
+			"hasLeft":  bson.M{"$ne": true},
+		})
+		if err != nil {
+			return nil, err
+		}
+		defer cursor.Close(ctx)
+
+		var participants []models.Participant
+		if err := cursor.All(ctx, &participants); err != nil {
+			return nil, err
+		}
+		
+		for _, p := range participants {
+			result[p.RoomCode] = append(result[p.RoomCode], p)
+		}
+		return result, nil
+	}
+
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	
+	codeMap := make(map[string]bool)
+	for _, code := range upperCodes {
+		codeMap[code] = true
+	}
+
+	for _, p := range r.participants {
+		if codeMap[strings.ToUpper(p.RoomCode)] && !p.HasLeft {
+			result[strings.ToUpper(p.RoomCode)] = append(result[strings.ToUpper(p.RoomCode)], *p)
+		}
+	}
+	return result, nil
+}
+
 // FindByParticipantID retrieves all active room participation records for a user
 func (r *ParticipantRepo) FindByParticipantID(ctx context.Context, participantID string) ([]models.Participant, error) {
 	if r.col != nil {
