@@ -240,6 +240,15 @@ func (h *Hub) handleRequestSync(client *Client) {
 		sourceType = "catalog"
 	}
 
+	currentPosition := room.PlaybackPositionSeconds
+	if !room.IsPaused && !room.UpdatedAt.IsZero() {
+		elapsedSeconds := time.Since(room.UpdatedAt).Seconds()
+		currentPosition += elapsedSeconds
+	}
+	if room.DurationSeconds > 0 && currentPosition > room.DurationSeconds {
+		currentPosition = room.DurationSeconds
+	}
+
 	syncPayload := models.RoomStatePayload{
 		RoomCode:           room.RoomCode,
 		Name:               room.Name,
@@ -249,7 +258,7 @@ func (h *Hub) handleRequestSync(client *Client) {
 		MediaURL:           room.MediaURL,
 		DurationSeconds:    room.DurationSeconds,
 		IsPaused:           room.IsPaused,
-		Position:           room.PlaybackPositionSeconds,
+		Position:           currentPosition,
 		DirectorCutEnabled: room.DirectorCutEnabled,
 		HostParticipantID:  room.HostParticipantID,
 		Participants:       participants,
