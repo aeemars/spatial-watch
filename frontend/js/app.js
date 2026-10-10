@@ -1312,7 +1312,7 @@ const App = (() => {
 
       document.getElementById('lobby-dc-badge').hidden = !room.directorCutEnabled;
 
-      // Preload media metadata for VR screen initialization and preflight check
+      // Preload media metadata and buffer blob for zero-lag streaming
       if (room.mediaUrl) {
         Cinema.preloadMedia(
           room.mediaUrl,
@@ -1325,6 +1325,9 @@ const App = (() => {
             if (window.XR && typeof XR.setMediaReady === 'function') {
               XR.setMediaReady(false);
             }
+          },
+          (percent, loaded, total) => {
+            updateLobbyBufferProgress(percent, loaded, total);
           }
         );
       }
@@ -1333,6 +1336,34 @@ const App = (() => {
       updateParticipantList(participants);
     } catch (e) {
       console.warn('[app] failed to refresh lobby:', e);
+    }
+  }
+
+  function updateLobbyBufferProgress(percent, loaded, total) {
+    const wrap = document.getElementById('lobby-buffer-status');
+    const fill = document.getElementById('lobby-buffer-fill');
+    const pctEl = document.getElementById('lobby-buffer-percent');
+    const label = document.getElementById('lobby-buffer-label');
+    if (!wrap) return;
+
+    wrap.hidden = false;
+    if (fill) fill.style.width = `${percent}%`;
+    if (pctEl) pctEl.textContent = `${percent}%`;
+
+    if (percent >= 100) {
+      if (label) label.textContent = '✓ Fully buffered for zero-lag playback';
+      wrap.classList.add('lobby-buffer-status--ready');
+    } else {
+      wrap.classList.remove('lobby-buffer-status--ready');
+      if (label) {
+        if (total > 0) {
+          const mbLoaded = (loaded / (1024 * 1024)).toFixed(1);
+          const mbTotal = (total / (1024 * 1024)).toFixed(1);
+          label.textContent = `Buffering video (${mbLoaded}/${mbTotal} MB)…`;
+        } else {
+          label.textContent = 'Buffering video for zero-lag playback…';
+        }
+      }
     }
   }
 
@@ -1378,7 +1409,17 @@ const App = (() => {
         if (XR.isSupported() && !XR.isInVR()) {
           XR.enterVR();
         }
+
+        // Sync playback state ONCE media is actually ready!
+        if (!room.isPaused) {
+          const elapsed = (Date.now() - new Date(room.updatedAt).getTime()) / 1000;
+          Cinema.seek(room.playbackPositionSeconds + elapsed);
+          Cinema.play();
+        } else {
+          Cinema.seek(room.playbackPositionSeconds);
+        }
       });
+
       Cinema.onEnded(() => {
         handleScreeningEnded();
       });
@@ -1388,20 +1429,6 @@ const App = (() => {
       const cinemaNameEl = document.getElementById('cinema-room-name');
       if (cinemaNameEl) cinemaNameEl.textContent = room.name || roomName;
       document.getElementById('cinema-participant-badge').textContent = (data.participants || []).length;
-
-      // Direct Quest entry: if WebXR supported, request session immediately on click
-      if (XR.isSupported() && !XR.isInVR()) {
-        XR.enterVR();
-      }
-
-      // Sync playback state
-      if (!room.isPaused) {
-        const elapsed = (Date.now() - new Date(room.updatedAt).getTime()) / 1000;
-        Cinema.seek(room.playbackPositionSeconds + elapsed);
-        Cinema.play();
-      } else {
-        Cinema.seek(room.playbackPositionSeconds);
-      }
 
       // Director's Cut state
       DirectorsCut.setEnabled(room.directorCutEnabled);
@@ -1778,6 +1805,11 @@ const App = (() => {
     stopTimeUpdater();
     DirectorsCut.stopChecking();
     Cinema.destroy();
+    const bufStatus = document.getElementById('lobby-buffer-status');
+    if (bufStatus) {
+      bufStatus.hidden = true;
+      bufStatus.classList.remove('lobby-buffer-status--ready');
+    }
 
     roomCode = '';
     roomName = '';

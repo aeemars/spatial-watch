@@ -76,7 +76,15 @@ func (h *Handler) UploadFastStart(w http.ResponseWriter, r *http.Request) {
 
 	// 2. Run ffmpeg faststart
 	fastPath := filepath.Join("/tmp", randomID+"_fast"+ext)
-	cmd := exec.Command("backend/ffmpeg", "-i", rawPath, "-c", "copy", "-movflags", "faststart", fastPath)
+	ffmpegBin := "ffmpeg"
+	if _, err := exec.LookPath("ffmpeg"); err != nil {
+		if _, err := os.Stat("backend/ffmpeg"); err == nil {
+			ffmpegBin = "backend/ffmpeg"
+		} else if _, err := os.Stat("./ffmpeg"); err == nil {
+			ffmpegBin = "./ffmpeg"
+		}
+	}
+	cmd := exec.Command(ffmpegBin, "-i", rawPath, "-c", "copy", "-movflags", "faststart", fastPath)
 	if err := cmd.Run(); err != nil {
 		log.Printf("[upload] ffmpeg faststart error: %v", err)
 		// Fallback to uploading the raw file if ffmpeg fails

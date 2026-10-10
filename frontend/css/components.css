@@ -2078,5 +2078,110 @@
   transition: width 0.15s ease-out;
 }
 
+/* ────────────────────────────────────────────────────────
+   LOBBY MEDIA BUFFER PROGRESS
+   ──────────────────────────────────────────────────────── */
+
+.lobby-buffer-status {
+  margin-top: var(--space-3);
+  padding: var(--space-2) var(--space-3);
+  background: rgba(255, 255, 255, 0.03);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: var(--radius-md);
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.lobby-buffer-status--ready {
+  border-color: rgba(16, 185, 129, 0.35);
+  background: rgba(16, 185, 129, 0.06);
+}
+
+.lobby-buffer-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  font-size: 11.5px;
+  color: var(--text-secondary);
+}
+
+.lobby-buffer-status--ready .lobby-buffer-header {
+  color: #10b981;
+  font-weight: var(--weight-medium);
+}
+
+.lobby-buffer-percent {
+  font-weight: var(--weight-semibold);
+  color: var(--gold);
+  font-feature-settings: 'tnum';
+}
+
+.lobby-buffer-status--ready .lobby-buffer-percent {
+  color: #10b981;
+}
+
+.lobby-buffer-bar {
+  width: 100%;
+  height: 4px;
+  background: rgba(255, 255, 255, 0.08);
+  border-radius: var(--radius-full);
+  overflow: hidden;
+}
+
+.lobby-buffer-fill {
+  height: 100%;
+  background: linear-gradient(90deg, var(--gold-dark), var(--gold));
+  border-radius: var(--radius-full);
+  transition: width 0.2s ease-out;
+}
+
+.lobby-buffer-status--ready .lobby-buffer-fill {
+  background: #10b981;
+}
+
+/* ────────────────────────────────────────────────────────
+   CINEMA BUFFERING OVERLAY
+   ──────────────────────────────────────────────────────── */
+
+.cinema-buffering-overlay {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  z-index: 60;
+  pointer-events: none;
+}
+
+.cinema-buffering-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-3);
+  padding: var(--space-3) var(--space-5);
+  background: rgba(10, 13, 22, 0.88);
+  border: 1px solid rgba(231, 188, 114, 0.4);
+  border-radius: var(--radius-full);
+  backdrop-filter: blur(14px);
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.7), 0 0 24px rgba(231, 188, 114, 0.18);
+  color: var(--text-primary);
+  font-size: var(--text-sm);
+  font-weight: var(--weight-medium);
+}
+
+.cinema-buffering-badge .spinner {
+  width: 18px;
+  height: 18px;
+  border: 2px solid rgba(231, 188, 114, 0.2);
+  border-top-color: var(--gold);
+  border-radius: 50%;
+  animation: spin 0.8s linear infinite;
+}
+
+#cinema-buffering-percent {
+  font-weight: var(--weight-bold);
+  color: var(--gold);
+  font-feature-settings: 'tnum';
+}
+
 
 

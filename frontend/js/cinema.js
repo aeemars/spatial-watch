@@ -11,6 +11,155 @@ const Cinema = (() => {
   let isPlaying = false;
   let isHost = false;
   let animFrameId = null;
+  let currentMediaUrl = null; // Track canonical media URL across preload/init
+
+  // Blob & Cache Management for instant seeking and zero-buffering playback
+  const blobUrlCache = new Map(); // canonicalUrl -> blobUrl
+  const activeDownloads = new Map(); // canonicalUrl -> Promise<string>
+  const downloadProgressMap = new Map(); // canonicalUrl -> { percent, loaded, total }
+  const CACHE_NAME = 'spatialwatch-media-v1';
+
+  function normalizeUrl(url) {
+    if (!url) return '';
+    return url.replace(/[?&]_cb=\d+/, '');
+  }
+
+  function getCachedBlobUrl(url) {
+    const canonical = normalizeUrl(url);
+    return blobUrlCache.get(canonical) || null;
+  }
+
+  async function getOrFetchMediaBlobUrl(mediaUrl, onProgress) {
+    if (!mediaUrl) return mediaUrl;
+    const canonical = normalizeUrl(mediaUrl);
+
+    // 1. If already created in RAM this session
+    if (blobUrlCache.has(canonical)) {
+      const cached = blobUrlCache.get(canonical);
+      if (typeof onProgress === 'function') onProgress(100, 1, 1);
+      return cached;
+    }
+
+    // 2. If download is already in-flight, attach to shared promise
+    if (activeDownloads.has(canonical)) {
+      if (typeof onProgress === 'function') {
+        const lastProg = downloadProgressMap.get(canonical);
+        if (lastProg) onProgress(lastProg.percent, lastProg.loaded, lastProg.total);
+      }
+      return activeDownloads.get(canonical);
+    }
+
+    const downloadPromise = (async () => {
+      try {
+        // 3. Check persistent CacheStorage API
+        if ('caches' in window) {
+          try {
+            const cache = await caches.open(CACHE_NAME);
+            const cachedResponse = await cache.match(canonical);
+            if (cachedResponse) {
+              const blob = await cachedResponse.blob();
+              if (blob && blob.size > 0) {
+                const blobUrl = URL.createObjectURL(blob);
+                blobUrlCache.set(canonical, blobUrl);
+                downloadProgressMap.set(canonical, { percent: 100, loaded: blob.size, total: blob.size });
+                if (typeof onProgress === 'function') onProgress(100, blob.size, blob.size);
+                return blobUrl;
+              }
+            }
+          } catch (cacheErr) {
+            console.warn('[cinema] Cache API read warning:', cacheErr);
+          }
+        }
+
+        // 4. Stream-download via fetch with progress reporting
+        const response = await fetch(mediaUrl, { mode: 'cors' });
+        if (!response.ok) {
+          throw new Error(`Media fetch returned status ${response.status}`);
+        }
+
+        const contentLengthHeader = response.headers.get('content-length');
+        const totalBytes = contentLengthHeader ? parseInt(contentLengthHeader, 10) : 0;
+        const contentType = response.headers.get('content-type') || 'video/mp4';
+
+        let blob;
+        if (!response.body || totalBytes === 0) {
+          blob = await response.blob();
+          if (typeof onProgress === 'function') onProgress(100, blob.size, blob.size);
+        } else {
+          const reader = response.body.getReader();
+          let loadedBytes = 0;
+          const chunks = [];
+
+          while (true) {
+            const { done, value } = await reader.read();
+            if (done) break;
+            chunks.push(value);
+            loadedBytes += value.length;
+            if (totalBytes > 0) {
+              const pct = Math.min(99, Math.round((loadedBytes / totalBytes) * 100));
+              downloadProgressMap.set(canonical, { percent: pct, loaded: loadedBytes, total: totalBytes });
+              if (typeof onProgress === 'function') {
+                onProgress(pct, loadedBytes, totalBytes);
+              }
+            }
+          }
+          blob = new Blob(chunks, { type: contentType });
+        }
+
+        // 5. Store response in persistent CacheStorage
+        if ('caches' in window && blob && blob.size > 0) {
+          try {
+            const cache = await caches.open(CACHE_NAME);
+            const cacheResponse = new Response(blob, {
+              headers: {
+                'Content-Type': contentType,
+                'Content-Length': String(blob.size),
+              },
+            });
+            await cache.put(canonical, cacheResponse);
+          } catch (cacheErr) {
+            console.warn('[cinema] Cache API write warning:', cacheErr);
+          }
+        }
+
+        const blobUrl = URL.createObjectURL(blob);
+        blobUrlCache.set(canonical, blobUrl);
+        downloadProgressMap.set(canonical, { percent: 100, loaded: blob.size, total: blob.size });
+        if (typeof onProgress === 'function') onProgress(100, blob.size, blob.size);
+        return blobUrl;
+      } catch (err) {
+        console.warn('[cinema] Blob prefetch error, falling back to direct stream:', err);
+        // Fallback to original URL so playback is never blocked
+        return mediaUrl;
+      } finally {
+        activeDownloads.delete(canonical);
+      }
+    })();
+
+    activeDownloads.set(canonical, downloadPromise);
+    return downloadPromise;
+  }
+
+  function showBuffering(text, percent) {
+    const overlay = document.getElementById('cinema-buffering-overlay');
+    const textEl = document.getElementById('cinema-buffering-text');
+    const pctEl = document.getElementById('cinema-buffering-percent');
+    if (!overlay) return;
+    if (textEl && text) textEl.textContent = text;
+    if (pctEl) {
+      if (typeof percent === 'number' && percent > 0 && percent < 100) {
+        pctEl.textContent = `${Math.round(percent)}%`;
+      } else {
+        pctEl.textContent = '';
+      }
+    }
+    overlay.hidden = false;
+  }
+
+  function hideBuffering() {
+    const overlay = document.getElementById('cinema-buffering-overlay');
+    if (overlay) overlay.hidden = true;
+  }
 
   // Participant seat markers
   const seatMarkers = {};
@@ -34,17 +183,19 @@ const Cinema = (() => {
 
     if (!canvas || !video) return;
 
-    // Reset error overlay
+    // Reset error overlay and buffering
     hideMediaError();
+    hideBuffering();
 
     // Set up video with CORS and lifecycle hooks
     video.crossOrigin = 'anonymous';
-    video.preload = 'metadata';
+    video.preload = 'auto';
     video.loop = false;
 
     video.onloadedmetadata = () => {
       isMediaReadyState = true;
       updateScreenDimensions();
+      hideBuffering();
       if (typeof onReadyCallback === 'function') onReadyCallback(video);
       if (window.XR && typeof XR.setMediaReady === 'function') {
         XR.setMediaReady(true, { duration: video.duration });
@@ -59,6 +210,7 @@ const Cinema = (() => {
 
     video.onerror = (e) => {
       isMediaReadyState = false;
+      hideBuffering();
       console.warn('[cinema] video load error:', video.error);
       showMediaError(video.error);
       if (typeof onErrorCallback === 'function') onErrorCallback(video.error);
@@ -67,17 +219,63 @@ const Cinema = (() => {
       }
     };
 
-    // If source changed, load it
-    if (video.src !== mediaUrl) {
-      video.src = mediaUrl;
+    // Buffer state events
+    video.onwaiting = () => {
+      showBuffering('Buffering video…');
+    };
+    video.oncanplay = () => {
+      hideBuffering();
+    };
+    video.onplaying = () => {
+      hideBuffering();
+    };
+    video.onseeking = () => {
+      if (video.readyState < 3) {
+        showBuffering('Seeking…');
+      }
+    };
+    video.onseeked = () => {
+      hideBuffering();
+      if (videoTexture) videoTexture.needsUpdate = true;
+    };
+
+    // Normalize URL for comparison
+    const canonical = normalizeUrl(mediaUrl);
+
+    // If cached in RAM or Cache API, use blob URL
+    const cachedBlob = getCachedBlobUrl(canonical);
+
+    if (cachedBlob && (currentMediaUrl !== canonical || video.error || video.readyState === 0)) {
+      currentMediaUrl = canonical;
+      isMediaReadyState = false;
+      video.src = cachedBlob;
       video.load();
-    } else if (video.readyState >= 1) {
-      // Already has metadata
+    } else if (currentMediaUrl === canonical && video.readyState >= 1) {
+      // Already has metadata from preload
       isMediaReadyState = true;
+      hideBuffering();
+      updateScreenDimensions();
       if (typeof onReadyCallback === 'function') onReadyCallback(video);
       if (window.XR && typeof XR.setMediaReady === 'function') {
         XR.setMediaReady(true, { duration: video.duration });
       }
+    } else {
+      // Show buffering indicator while downloading / preparing blob
+      showBuffering('Buffering screening for zero-lag playback…', 0);
+      getOrFetchMediaBlobUrl(mediaUrl, (pct) => {
+        showBuffering('Buffering screening for zero-lag playback…', pct);
+      }).then((resolvedUrl) => {
+        if (!video) return;
+        currentMediaUrl = canonical;
+        isMediaReadyState = false;
+        video.src = resolvedUrl;
+        video.load();
+      }).catch((err) => {
+        currentMediaUrl = canonical;
+        isMediaReadyState = false;
+        video.src = mediaUrl;
+        video.load();
+      });
     }
 
     // Initialize Three.js
@@ -217,12 +415,12 @@ const Cinema = (() => {
     videoMesh.geometry = new THREE.PlaneGeometry(width, height);
   }
 
-  function preloadMedia(mediaUrl, onReady, onError) {
+  function preloadMedia(mediaUrl, onReady, onError, onProgress) {
     video = document.getElementById('cinema-video');
-    if (!video) return;
+    if (!video || !mediaUrl) return;
 
     video.crossOrigin = 'anonymous';
-    video.preload = 'metadata';
+    video.preload = 'auto';
 
     const handleLoadedMetadata = () => {
       isMediaReadyState = true;
@@ -243,19 +441,35 @@ const Cinema = (() => {
     video.onloadedmetadata = handleLoadedMetadata;
     video.onerror = handleError;
 
-    const rawUrl = new URL(mediaUrl, window.location.href).href;
-    const separator = rawUrl.includes('?') ? '&' : '?';
-    const resolvedUrl = rawUrl + separator + '_cb=' + Date.now();
+    const canonical = normalizeUrl(mediaUrl);
 
-    if (video.src !== resolvedUrl) {
-      isMediaReadyState = false;
-      video.src = resolvedUrl;
-      video.load();
-    } else if (video.readyState >= 1) {
+    // If already loaded into video element with this media
+    if (currentMediaUrl === canonical && video.readyState >= 1) {
       handleLoadedMetadata();
-    } else if (video.error) {
-      handleError();
+      if (typeof onProgress === 'function') onProgress(100, 1, 1);
+      return;
     }
+
+    // Start background blob prefetch
+    getOrFetchMediaBlobUrl(mediaUrl, onProgress).then((resolvedUrl) => {
+      if (!video) return;
+      if (currentMediaUrl !== canonical || video.error || video.readyState === 0) {
+        currentMediaUrl = canonical;
+        isMediaReadyState = false;
+        video.src = resolvedUrl;
+        video.load();
+      } else if (video.readyState >= 1) {
+        handleLoadedMetadata();
+      }
+    }).catch((err) => {
+      console.warn('[cinema] preload fallback:', err);
+      if (currentMediaUrl !== canonical) {
+        currentMediaUrl = canonical;
+        isMediaReadyState = false;
+        video.src = mediaUrl;
+        video.load();
+      }
+    });
   }
 
   function showMediaError(errorDetails) {
@@ -409,7 +623,7 @@ const Cinema = (() => {
   }
 
   function animate() {
-    if (videoTexture && video && !video.paused) {
+    if (videoTexture && video && (!video.paused || video.seeking)) {
       videoTexture.needsUpdate = true;
     }
     renderer.render(scene, camera);
@@ -440,6 +654,7 @@ const Cinema = (() => {
   function seek(time) {
     if (!video) return;
     video.currentTime = Math.max(0, Math.min(time, video.duration || 0));
+    if (videoTexture) videoTexture.needsUpdate = true;
   }
 
   function getCurrentTime() {
@@ -482,12 +697,21 @@ const Cinema = (() => {
     window.removeEventListener('resize', onResize);
     onEndedCallback = null;
     isMediaReadyState = false;
+    currentMediaUrl = null;
+    hideBuffering();
+    hideMediaError();
     if (video) {
       video.pause();
       video.removeAttribute('src');
       video.load();
       video.onloadedmetadata = null;
       video.onerror = null;
+      video.onended = null;
+      video.onwaiting = null;
+      video.oncanplay = null;
+      video.onplaying = null;
+      video.onseeking = null;
+      video.onseeked = null;
     }
     if (renderer) {
       renderer.setAnimationLoop(null);
@@ -515,6 +739,9 @@ const Cinema = (() => {
     preloadMedia,
     showMediaError,
     hideMediaError,
+    showBuffering,
+    hideBuffering,
+    getCachedBlobUrl,
     onEnded: (cb) => { onEndedCallback = cb; },
     getVideo: () => video,
     isPlaying: () => isPlaying,
