@@ -39,6 +39,11 @@ func NewRoomRepo(db *mongo.Database) *RoomRepo {
 			Keys:    bson.D{{Key: "roomCode", Value: 1}},
 			Options: options.Index().SetUnique(true),
 		})
+		
+		// Create compound index on hostParticipantId and createdAt for fast GetUserRooms lookups + sorting
+		col.Indexes().CreateOne(ctx, mongo.IndexModel{
+			Keys: bson.D{{Key: "hostParticipantId", Value: 1}, {Key: "createdAt", Value: -1}},
+		})
 		repo.col = col
 	}
 	return repo

@@ -37,9 +37,9 @@ func NewParticipantRepo(db *mongo.Database) *ParticipantRepo {
 		col.Indexes().CreateOne(ctx, mongo.IndexModel{
 			Keys: bson.D{{Key: "roomCode", Value: 1}},
 		})
-		// Index on participantId
+		// Index on participantId + joinedAt for fast GetUserRooms sorting
 		col.Indexes().CreateOne(ctx, mongo.IndexModel{
-			Keys: bson.D{{Key: "participantId", Value: 1}},
+			Keys: bson.D{{Key: "participantId", Value: 1}, {Key: "joinedAt", Value: -1}},
 		})
 		// Compound index for user in room
 		col.Indexes().CreateOne(ctx, mongo.IndexModel{
