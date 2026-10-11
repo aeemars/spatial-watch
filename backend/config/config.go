@@ -34,9 +34,11 @@ func (c *Config) IsR2Configured() bool {
 
 // Load reads configuration from environment variables
 func Load() *Config {
-	// Attempt to load .env file (non-fatal if missing)
-	if err := godotenv.Load(); err != nil {
-		log.Println("No .env file found, using environment variables")
+	// Attempt to load .env file from current dir or parent dir (non-fatal if missing)
+	if err := godotenv.Load(".env"); err != nil {
+		if err2 := godotenv.Load("../.env"); err2 != nil {
+			log.Println("No .env file found, using environment variables")
+		}
 	}
 
 	port, err := strconv.Atoi(getEnv("PORT", "8080"))

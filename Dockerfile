@@ -24,7 +24,9 @@ FROM alpine:3.20
 
 WORKDIR /app
 
-RUN apk add --no-cache ca-certificates tzdata
+RUN apk add --no-cache ca-certificates tzdata ffmpeg && \
+    addgroup -g 10001 -S spatialwatch && \
+    adduser -u 10001 -S spatialwatch -G spatialwatch
 
 # Copy the compiled binary from builder
 COPY --from=builder /build/spatialwatch-server ./spatialwatch-server
@@ -36,5 +38,7 @@ COPY frontend/ ./frontend/
 ENV PORT=8080
 
 EXPOSE 8080
+
+USER spatialwatch:spatialwatch
 
 CMD ["./spatialwatch-server"]

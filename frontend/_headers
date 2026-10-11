@@ -1,0 +1,35 @@
+# ═══════════════════════════════════════════════════════════
+# Spatial Watch — Cloudflare Pages Custom Edge Headers
+# ═══════════════════════════════════════════════════════════
+
+# Global Security Headers
+/*
+  X-Content-Type-Options: nosniff
+  X-Frame-Options: SAMEORIGIN
+  Referrer-Policy: strict-origin-when-cross-origin
+  X-XSS-Protection: 1; mode=block
+  Permissions-Policy: camera=(), microphone=(), geolocation=()
+
+# Dynamic HTML Root Pages — Revalidate with short TTL
+/
+  Cache-Control: public, max-age=300, must-revalidate
+
+/index.html
+  Cache-Control: public, max-age=300, must-revalidate
+
+# Immutable Static CSS, JS, and Three.js Assets (7-Day TTL)
+/css/*
+  Cache-Control: public, max-age=604800, immutable
+
+/js/*
+  Cache-Control: public, max-age=604800, immutable
+
+/assets/*
+  Cache-Control: public, max-age=604800, immutable
+
+# Bundled Catalog Video Streaming Support
+/assets/videos/*
+  Cache-Control: public, max-age=86400
+  Accept-Ranges: bytes
+  Access-Control-Allow-Origin: *
+  Access-Control-Expose-Headers: Content-Length, Content-Range, Accept-Ranges, ETag
