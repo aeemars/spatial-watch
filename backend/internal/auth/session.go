@@ -232,9 +232,28 @@ func (s *AuthService) Logout(w http.ResponseWriter, r *http.Request) error {
 	return nil
 }
 
+// resolveSameSite maps the configured CookieSameSite string to http.SameSite and determines if Secure is required
+func (s *AuthService) resolveSameSite() (http.SameSite, bool) {
+	sameSiteMode := http.SameSiteLaxMode
+	secure := s.cfg.CookieSecure
+
+	switch strings.ToLower(strings.TrimSpace(s.cfg.CookieSameSite)) {
+	case "none":
+		sameSiteMode = http.SameSiteNoneMode
+		secure = true // RFC 6265bis: SameSite=None requires Secure
+	case "strict":
+		sameSiteMode = http.SameSiteStrictMode
+	default:
+		sameSiteMode = http.SameSiteLaxMode
+	}
+	return sameSiteMode, secure
+}
+
 // SetSessionCookie writes the sw_session cookie to ResponseWriter
 func (s *AuthService) SetSessionCookie(w http.ResponseWriter, rawToken string) {
 	maxAge := int(s.SessionDuration().Seconds())
+	sameSiteMode, secure := s.resolveSameSite()
+
 	cookie := &http.Cookie{
 		Name:     CookieSessionName,
 		Value:    rawToken,
@@ -242,8 +261,8 @@ func (s *AuthService) SetSessionCookie(w http.ResponseWriter, rawToken string) {
 		MaxAge:   maxAge,
 		Expires:  time.Now().Add(s.SessionDuration()),
 		HttpOnly: true,
-		Secure:   s.cfg.CookieSecure,
-		SameSite: http.SameSiteLaxMode,
+		Secure:   secure,
+		SameSite: sameSiteMode,
 	}
 	domain := strings.TrimSpace(s.cfg.CookieDomain)
 	if domain != "" && !strings.EqualFold(domain, "localhost") && domain != "127.0.0.1" && strings.Contains(domain, ".") {
@@ -254,6 +273,8 @@ func (s *AuthService) SetSessionCookie(w http.ResponseWriter, rawToken string) {
 
 // ClearSessionCookie overwrites the sw_session cookie with an expired value
 func (s *AuthService) ClearSessionCookie(w http.ResponseWriter) {
+	sameSiteMode, secure := s.resolveSameSite()
+
 	cookie := &http.Cookie{
 		Name:     CookieSessionName,
 		Value:    "",
@@ -261,8 +282,8 @@ func (s *AuthService) ClearSessionCookie(w http.ResponseWriter) {
 		MaxAge:   -1,
 		Expires:  time.Unix(0, 0),
 		HttpOnly: true,
-		Secure:   s.cfg.CookieSecure,
-		SameSite: http.SameSiteLaxMode,
+		Secure:   secure,
+		SameSite: sameSiteMode,
 	}
 	domain := strings.TrimSpace(s.cfg.CookieDomain)
 	if domain != "" && !strings.EqualFold(domain, "localhost") && domain != "127.0.0.1" && strings.Contains(domain, ".") {

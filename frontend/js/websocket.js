@@ -14,6 +14,19 @@ const WS = (() => {
   const listeners = {};
 
   function getWSUrl() {
+    if (window.ENV_WS_URL && typeof window.ENV_WS_URL === 'string' && window.ENV_WS_URL.trim() !== '') {
+      const base = window.ENV_WS_URL.trim().replace(/\/+$/, '');
+      return `${base}/ws?roomCode=${encodeURIComponent(roomCode)}`;
+    }
+    if (window.ENV_API_URL && typeof window.ENV_API_URL === 'string' && window.ENV_API_URL.trim() !== '') {
+      try {
+        const u = new URL(window.ENV_API_URL.trim());
+        const wsProto = u.protocol === 'https:' ? 'wss:' : 'ws:';
+        return `${wsProto}//${u.host}/ws?roomCode=${encodeURIComponent(roomCode)}`;
+      } catch (e) {
+        // Fallback to location.host if malformed
+      }
+    }
     const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
     return `${proto}//${location.host}/ws?roomCode=${encodeURIComponent(roomCode)}`;
   }

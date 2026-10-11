@@ -388,3 +388,63 @@ func modelsSessionHelper(tokenHash, userID string, createdAt, expiresAt time.Tim
 		LastSeenAt: createdAt,
 	}
 }
+
+func TestCookieSameSite_Configurations(t *testing.T) {
+	cases := []struct {
+		name         string
+		sameSiteConf string
+		secureConf   bool
+		expectedSS   http.SameSite
+		expectedSec  bool
+	}{
+		{
+			name:         "Default lax mode",
+			sameSiteConf: "lax",
+			secureConf:   false,
+			expectedSS:   http.SameSiteLaxMode,
+			expectedSec:  false,
+		},
+		{
+			name:         "SameSite None forces Secure true for cross-origin PXXL deployment",
+			sameSiteConf: "none",
+			secureConf:   false, // Even if set false, None mandates Secure=true
+			expectedSS:   http.SameSiteNoneMode,
+			expectedSec:  true,
+		},
+		{
+			name:         "Strict mode",
+			sameSiteConf: "strict",
+			secureConf:   true,
+			expectedSS:   http.SameSiteStrictMode,
+			expectedSec:  true,
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			userRepo := repository.NewUserRepo(nil)
+			sessionRepo := repository.NewSessionRepo(nil)
+			cfg := &config.Config{
+				CookieSecure:        tc.secureConf,
+				CookieSameSite:      tc.sameSiteConf,
+				SessionDurationDays: 30,
+			}
+			svc := auth.NewAuthService(userRepo, sessionRepo, cfg)
+
+			w := httptest.NewRecorder()
+			svc.SetSessionCookie(w, "test-token-value")
+
+			cookies := w.Result().Cookies()
+			if len(cookies) == 0 {
+				t.Fatal("Expected cookie to be set")
+			}
+			cookie := cookies[0]
+			if cookie.SameSite != tc.expectedSS {
+				t.Errorf("Expected SameSite %v, got %v", tc.expectedSS, cookie.SameSite)
+			}
+			if cookie.Secure != tc.expectedSec {
+				t.Errorf("Expected Secure %v, got %v", tc.expectedSec, cookie.Secure)
+			}
+		})
+	}
+}

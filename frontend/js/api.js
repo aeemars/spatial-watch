@@ -4,7 +4,9 @@
    ═══════════════════════════════════════════════════════════ */
 
 const API = (() => {
-  const BASE = window.location.origin;
+  const BASE = (window.ENV_API_URL && typeof window.ENV_API_URL === 'string' && window.ENV_API_URL.trim() !== '')
+    ? window.ENV_API_URL.trim().replace(/\/+$/, '')
+    : window.location.origin;
   let sessionPromise = null;
 
   async function request(method, path, body, isRetry = false) {

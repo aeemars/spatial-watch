@@ -17,6 +17,7 @@ type Config struct {
 	PublicBaseURL       string
 	CookieSecure        bool
 	CookieDomain        string
+	CookieSameSite      string
 	CORSAllowedOrigins  []string
 	SessionDurationDays int
 	// Cloudflare R2 Object Storage
@@ -51,6 +52,11 @@ func Load() *Config {
 		sessionDuration = 30
 	}
 
+	cookieSameSite := strings.ToLower(strings.TrimSpace(getEnv("COOKIE_SAMESITE", "lax")))
+	if cookieSameSite != "none" && cookieSameSite != "strict" && cookieSameSite != "lax" {
+		cookieSameSite = "lax"
+	}
+
 	cookieSecure := false
 	if val, ok := os.LookupEnv("COOKIE_SECURE"); ok {
 		cookieSecure = strings.EqualFold(val, "true") || val == "1"
@@ -63,10 +69,15 @@ func Load() *Config {
 		}
 	}
 
+	// RFC 6265bis mandates that SameSite=None cookies must be Secure
+	if cookieSameSite == "none" {
+		cookieSecure = true
+	}
+
 	// Safety safeguard for local development: if PUBLIC_BASE_URL is plain http://localhost or http://127.0.0.1,
-	// do not force Secure=true as local browsers will discard the cookie over non-TLS connections.
+	// and cookieSameSite is not "none", do not force Secure=true as local browsers will discard the cookie over non-TLS connections.
 	publicURL := getEnv("PUBLIC_BASE_URL", "")
-	if strings.HasPrefix(strings.ToLower(publicURL), "http://localhost") || strings.HasPrefix(strings.ToLower(publicURL), "http://127.0.0.1") {
+	if cookieSameSite != "none" && (strings.HasPrefix(strings.ToLower(publicURL), "http://localhost") || strings.HasPrefix(strings.ToLower(publicURL), "http://127.0.0.1")) {
 		cookieSecure = false
 	}
 
@@ -87,6 +98,7 @@ func Load() *Config {
 		PublicBaseURL:       getEnv("PUBLIC_BASE_URL", "http://localhost:8080"),
 		CookieSecure:        cookieSecure,
 		CookieDomain:        getEnv("COOKIE_DOMAIN", ""),
+		CookieSameSite:      cookieSameSite,
 		CORSAllowedOrigins:  corsOrigins,
 		SessionDurationDays: sessionDuration,
 		R2AccountID:         getEnv("R2_ACCOUNT_ID", ""),

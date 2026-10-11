@@ -770,44 +770,72 @@ func (h *Handler) HandleWebSocket(w http.ResponseWriter, r *http.Request) {
 
 // ─── Helpers ─────────────────────────────────────────────────────
 
-func checkOrigin(allowedOrigins []string) func(r *http.Request) bool {
-	return func(r *http.Request) bool {
-		origin := r.Header.Get("Origin")
-		if origin == "" {
-			return true // non-browser or direct request
+// IsOriginAllowed validates whether an Origin header is permitted based on allowedOrigins and the current serverHost
+func IsOriginAllowed(origin string, allowedOrigins []string, serverHost string) bool {
+	if origin == "" {
+		return true // non-browser or direct request
+	}
+
+	u, err := url.Parse(origin)
+	if err != nil {
+		return false
+	}
+
+	// Exact match against server Host header
+	if serverHost != "" && strings.EqualFold(u.Host, serverHost) {
+		return true
+	}
+
+	for _, allowed := range allowedOrigins {
+		allowed = strings.TrimSpace(allowed)
+		if allowed == "" {
+			continue
 		}
 
-		u, err := url.Parse(origin)
-		if err != nil {
-			return false
-		}
-
-		// Exact match against server Host header
-		if strings.EqualFold(u.Host, r.Host) {
+		if strings.EqualFold(origin, allowed) {
 			return true
 		}
 
-		for _, allowed := range allowedOrigins {
-			if strings.EqualFold(origin, allowed) {
+		// Wildcard domain matching: *.pages.dev, https://*.pages.dev, etc.
+		if strings.HasPrefix(allowed, "*.") {
+			suffix := strings.TrimPrefix(allowed, "*")
+			if strings.HasSuffix(strings.ToLower(u.Host), strings.ToLower(suffix)) {
 				return true
 			}
-			if allowedURL, err := url.Parse(allowed); err == nil {
-				if strings.EqualFold(u.Host, allowedURL.Host) {
-					return true
-				}
+		} else if strings.HasPrefix(allowed, "https://*.") {
+			suffix := strings.TrimPrefix(allowed, "https://*")
+			if u.Scheme == "https" && strings.HasSuffix(strings.ToLower(u.Host), strings.ToLower(suffix)) {
+				return true
+			}
+		} else if strings.HasPrefix(allowed, "http://*.") {
+			suffix := strings.TrimPrefix(allowed, "http://*")
+			if u.Scheme == "http" && strings.HasSuffix(strings.ToLower(u.Host), strings.ToLower(suffix)) {
+				return true
 			}
 		}
 
-		// In development mode (when no explicit CORS origins are configured),
-		// permit localhost and 127.0.0.1
-		if len(allowedOrigins) == 0 {
-			hostname := u.Hostname()
-			if hostname == "localhost" || hostname == "127.0.0.1" {
+		if allowedURL, err := url.Parse(allowed); err == nil && allowedURL.Host != "" {
+			if strings.EqualFold(u.Host, allowedURL.Host) {
 				return true
 			}
 		}
+	}
 
-		return false
+	// In development mode (when no explicit CORS origins are configured),
+	// permit localhost and 127.0.0.1
+	if len(allowedOrigins) == 0 {
+		hostname := u.Hostname()
+		if hostname == "localhost" || hostname == "127.0.0.1" {
+			return true
+		}
+	}
+
+	return false
+}
+
+func checkOrigin(allowedOrigins []string) func(r *http.Request) bool {
+	return func(r *http.Request) bool {
+		return IsOriginAllowed(r.Header.Get("Origin"), allowedOrigins, r.Host)
 	}
 }
 
