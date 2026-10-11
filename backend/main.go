@@ -109,7 +109,8 @@ func main() {
 	// Set up router
 	r := mux.NewRouter()
 
-	// Apply Cloudflare edge cache, rate limiting, and CORS middlewares
+	// Apply defensive security headers, Cloudflare edge cache, rate limiting, and CORS middlewares
+	r.Use(securityHeadersMiddleware())
 	r.Use(cache.Middleware())
 	r.Use(limiter.Middleware())
 	r.Use(corsMiddleware(cfg.CORSAllowedOrigins))
@@ -186,6 +187,20 @@ func main() {
 	log.Printf("Spatial Watch listening on :%d", cfg.Port)
 	if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 		log.Fatalf("Server error: %v", err)
+	}
+}
+
+// securityHeadersMiddleware enforces defensive HTTP headers across all endpoints
+func securityHeadersMiddleware() mux.MiddlewareFunc {
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("X-Content-Type-Options", "nosniff")
+			w.Header().Set("X-Frame-Options", "SAMEORIGIN")
+			w.Header().Set("Referrer-Policy", "strict-origin-when-cross-origin")
+			w.Header().Set("X-XSS-Protection", "1; mode=block")
+			w.Header().Set("Permissions-Policy", "camera=(), microphone=(), geolocation=()")
+			next.ServeHTTP(w, r)
+		})
 	}
 }
 

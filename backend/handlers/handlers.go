@@ -8,8 +8,10 @@ import (
 	"io"
 	"log"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
@@ -132,6 +134,7 @@ func (h *Handler) UpdateProfile(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	r.Body = http.MaxBytesReader(w, r.Body, 1<<20)
 	var req models.UpdateProfileRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		respondError(w, http.StatusBadRequest, "Invalid request body")
@@ -174,6 +177,7 @@ func (h *Handler) CreateRoom(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	r.Body = http.MaxBytesReader(w, r.Body, 1<<20)
 	var req models.CreateRoomRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil && err.Error() != "EOF" {
 		respondError(w, http.StatusBadRequest, "Invalid request body")
@@ -372,6 +376,7 @@ func (h *Handler) JoinRoom(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	r.Body = http.MaxBytesReader(w, r.Body, 1<<20)
 	var req models.JoinRoomRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		respondError(w, http.StatusBadRequest, "Invalid request body")
@@ -403,6 +408,11 @@ func (h *Handler) JoinRoom(w http.ResponseWriter, r *http.Request) {
 	room, err := h.RoomRepo.FindByCode(ctx, roomCode)
 	if err != nil || !room.IsActive {
 		respondError(w, http.StatusNotFound, "Room not found or is no longer active")
+		return
+	}
+
+	if !room.ExpiresAt.IsZero() && time.Now().After(room.ExpiresAt) {
+		respondError(w, http.StatusGone, "This screening room has expired and concluded")
 		return
 	}
 
@@ -440,6 +450,11 @@ func (h *Handler) GetRoom(w http.ResponseWriter, r *http.Request) {
 	room, err := h.RoomRepo.FindByCode(ctx, roomCode)
 	if err != nil || !room.IsActive {
 		respondError(w, http.StatusNotFound, "Room not found or is no longer active")
+		return
+	}
+
+	if !room.ExpiresAt.IsZero() && time.Now().After(room.ExpiresAt) {
+		respondError(w, http.StatusNotFound, "Room has expired and is no longer active")
 		return
 	}
 
@@ -493,9 +508,13 @@ func (h *Handler) GetUserRooms(w http.ResponseWriter, r *http.Request) {
 	}
 	createdParticipantsMap, _ := h.PartRepo.FindParticipantsByRooms(ctx, createdCodeList)
 
+	includeInactive := r.URL.Query().Get("includeInactive") == "true"
 	for _, room := range createdRooms {
 		codeUpper := strings.ToUpper(room.RoomCode)
 		createdCodes[codeUpper] = true
+		if !includeInactive && !room.IsActive {
+			continue
+		}
 		parts := createdParticipantsMap[codeUpper]
 		mediaTitle := models.FormatMediaTitle(room.MediaTitle, room.MediaURL)
 		sourceType := room.MediaSourceType
@@ -553,6 +572,9 @@ func (h *Handler) GetUserRooms(w http.ResponseWriter, r *http.Request) {
 
 	joinedRecords := make([]models.UserRoomRecord, 0, len(joinedRooms))
 	for _, room := range joinedRooms {
+		if !includeInactive && !room.IsActive {
+			continue
+		}
 		codeUpper := strings.ToUpper(room.RoomCode)
 		parts := joinedParticipantsMap[codeUpper]
 		hostName := "Host"
@@ -718,6 +740,11 @@ func (h *Handler) HandleWebSocket(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if !room.ExpiresAt.IsZero() && time.Now().After(room.ExpiresAt) {
+		http.Error(w, "Room has expired and is no longer active", http.StatusNotFound)
+		return
+	}
+
 	// 3. Upgrade to WebSocket
 	conn, err := h.upgrader.Upgrade(w, r, nil)
 	if err != nil {
@@ -749,17 +776,37 @@ func checkOrigin(allowedOrigins []string) func(r *http.Request) bool {
 		if origin == "" {
 			return true // non-browser or direct request
 		}
-		if len(allowedOrigins) == 0 {
-			return true // default to permissive in dev
+
+		u, err := url.Parse(origin)
+		if err != nil {
+			return false
 		}
+
+		// Exact match against server Host header
+		if strings.EqualFold(u.Host, r.Host) {
+			return true
+		}
+
 		for _, allowed := range allowedOrigins {
 			if strings.EqualFold(origin, allowed) {
 				return true
 			}
+			if allowedURL, err := url.Parse(allowed); err == nil {
+				if strings.EqualFold(u.Host, allowedURL.Host) {
+					return true
+				}
+			}
 		}
-		if strings.Contains(origin, r.Host) {
-			return true
+
+		// In development mode (when no explicit CORS origins are configured),
+		// permit localhost and 127.0.0.1
+		if len(allowedOrigins) == 0 {
+			hostname := u.Hostname()
+			if hostname == "localhost" || hostname == "127.0.0.1" {
+				return true
+			}
 		}
+
 		return false
 	}
 }
@@ -791,6 +838,7 @@ func (h *Handler) PresignUpload(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	r.Body = http.MaxBytesReader(w, r.Body, 1<<20)
 	var req PresignUploadRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		respondError(w, http.StatusBadRequest, "Invalid request body")
@@ -851,11 +899,37 @@ func (h *Handler) PresignUpload(w http.ResponseWriter, r *http.Request) {
 
 // MockUpload handles PUT /api/media/mock-upload/{key:.+} for local dev simulation
 func (h *Handler) MockUpload(w http.ResponseWriter, r *http.Request) {
+	// 1. Disable mock upload if live Cloudflare R2 is configured
+	if h.Storage != nil && h.Storage.IsConfigured() {
+		respondError(w, http.StatusForbidden, "Mock upload endpoint is disabled when cloud storage is active")
+		return
+	}
+
+	// 2. Limit upload body size to 500MB
+	r.Body = http.MaxBytesReader(w, r.Body, 500*1024*1024)
+
+	// 3. Check expiration timestamp if provided
+	if expStr := r.URL.Query().Get("expires"); expStr != "" {
+		if expInt, err := strconv.ParseInt(expStr, 10, 64); err == nil {
+			if time.Now().Unix() > expInt {
+				respondError(w, http.StatusForbidden, "Upload URL has expired")
+				return
+			}
+		}
+	}
+
 	vars := mux.Vars(r)
 	rawKey := vars["key"]
-	cleanName := filepath.Base(rawKey)
+	cleanName := filepath.Base(filepath.Clean(rawKey))
 	if cleanName == "." || cleanName == "/" || cleanName == "" {
 		cleanName = fmt.Sprintf("upload-%d.mp4", time.Now().UnixNano())
+	}
+
+	// 4. Validate file extension to prevent arbitrary file writes and stored XSS
+	ext := strings.ToLower(filepath.Ext(cleanName))
+	if ext != ".mp4" && ext != ".webm" && ext != ".mov" {
+		respondError(w, http.StatusBadRequest, "Only .mp4, .webm, or .mov video files are supported")
+		return
 	}
 
 	uploadDir := filepath.Join("frontend", "assets", "uploads")

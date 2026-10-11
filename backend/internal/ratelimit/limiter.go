@@ -55,6 +55,9 @@ func NewLimiter(rules []Rule) *Limiter {
 // - POST /api/rooms: 5 req per 5 min
 // - GET /api/auth/session: 30 req per 1 min
 // - POST /api/media/presign-upload: 3 req per 10 min
+// - POST /api/media/upload-faststart: 3 req per 10 min
+// - POST /api/rooms/join: 20 req per 1 min
+// - PATCH /api/auth/profile: 20 req per 1 min
 // - GET /ws: 10 handshakes per 1 min
 func NewDefaultLimiter() *Limiter {
 	return NewLimiter([]Rule{
@@ -78,6 +81,27 @@ func NewDefaultLimiter() *Limiter {
 			Path:   "/api/media/presign-upload",
 			Limit:  3,
 			Window: 10 * time.Minute,
+		},
+		{
+			Name:   "upload_faststart",
+			Method: http.MethodPost,
+			Path:   "/api/media/upload-faststart",
+			Limit:  3,
+			Window: 10 * time.Minute,
+		},
+		{
+			Name:   "join_room",
+			Method: http.MethodPost,
+			Path:   "/api/rooms/join",
+			Limit:  20,
+			Window: 1 * time.Minute,
+		},
+		{
+			Name:   "update_profile",
+			Method: http.MethodPatch,
+			Path:   "/api/auth/profile",
+			Limit:  20,
+			Window: 1 * time.Minute,
 		},
 		{
 			Name:   "websocket_handshake",

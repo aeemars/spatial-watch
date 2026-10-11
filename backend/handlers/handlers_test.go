@@ -68,10 +68,14 @@ func setupTestRig() *testRig {
 	protected.HandleFunc("/auth/profile", h.UpdateProfile).Methods("PATCH")
 	protected.HandleFunc("/user/rooms", h.GetUserRooms).Methods("GET")
 	protected.HandleFunc("/media/presign-upload", h.PresignUpload).Methods("POST")
+	protected.HandleFunc("/media/upload-faststart", h.UploadFastStart).Methods("POST")
 	protected.HandleFunc("/rooms", h.CreateRoom).Methods("POST")
 	protected.HandleFunc("/rooms/join", h.JoinRoom).Methods("POST")
 	protected.HandleFunc("/rooms/{roomCode}", h.ShutdownRoom).Methods("DELETE")
 	protected.HandleFunc("/rooms/{roomCode}/leave", h.LeaveRoom).Methods("POST")
+
+	// Dev simulation endpoint for local direct uploads
+	api.HandleFunc("/media/mock-upload/{key:.+}", h.MockUpload).Methods("PUT", "OPTIONS")
 
 	// Public room endpoints
 	api.HandleFunc("/rooms/{roomCode}", h.GetRoom).Methods("GET")

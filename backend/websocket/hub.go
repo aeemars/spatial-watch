@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"log"
+	"math"
 	"strings"
 	"sync"
 	"time"
@@ -62,7 +63,7 @@ func (h *Hub) Unregister(client *Client) {
 	if clients, ok := h.rooms[client.RoomCode]; ok {
 		if _, exists := clients[client]; exists {
 			delete(clients, client)
-			close(client.Send)
+			client.CloseSend()
 
 			log.Printf("[ws] participant %s left room %s", client.ParticipantID, client.RoomCode)
 
@@ -105,10 +106,10 @@ func (h *Hub) HandleMessage(client *Client, raw []byte) {
 		h.handleRequestSync(client)
 	case "ping":
 		// Respond with pong
-		client.Send <- mustJSON(&models.WSEvent{
+		client.SendMessage(mustJSON(&models.WSEvent{
 			Type:       "pong",
 			ServerTime: time.Now().UnixMilli(),
-		})
+		}))
 	default:
 		log.Printf("[ws] unknown event type: %s from %s", event.Type, client.ParticipantID)
 	}
@@ -131,10 +132,10 @@ func (h *Hub) handlePlayback(client *Client, event *models.WSEvent) {
 	}
 
 	if room.HostParticipantID != client.ParticipantID {
-		client.Send <- mustJSON(&models.WSEvent{
+		client.SendMessage(mustJSON(&models.WSEvent{
 			Type:    "error",
 			Payload: map[string]string{"message": "Only the host can control playback"},
-		})
+		}))
 		return
 	}
 
@@ -144,6 +145,21 @@ func (h *Hub) handlePlayback(client *Client, event *models.WSEvent) {
 	if err := json.Unmarshal(payloadBytes, &payload); err != nil {
 		log.Printf("[ws] invalid playback payload: %v", err)
 		return
+	}
+
+	action := strings.ToLower(strings.TrimSpace(payload.Action))
+	if action != "play" && action != "pause" && action != "seek" {
+		log.Printf("[ws] invalid playback action %q from %s", payload.Action, client.ParticipantID)
+		return
+	}
+	payload.Action = action
+
+	// Validate and clamp position
+	if math.IsNaN(payload.Position) || math.IsInf(payload.Position, 0) || payload.Position < 0 {
+		payload.Position = 0
+	}
+	if room.DurationSeconds > 0 && payload.Position > room.DurationSeconds {
+		payload.Position = room.DurationSeconds
 	}
 
 	payload.ServerTime = time.Now().UnixMilli()
@@ -202,10 +218,10 @@ func (h *Hub) handleDirectorCut(client *Client, event *models.WSEvent) {
 	}
 
 	if room.HostParticipantID != client.ParticipantID {
-		client.Send <- mustJSON(&models.WSEvent{
+		client.SendMessage(mustJSON(&models.WSEvent{
 			Type:    "error",
 			Payload: map[string]string{"message": "Only the host can toggle Director's Cut"},
-		})
+		}))
 		return
 	}
 
@@ -265,11 +281,11 @@ func (h *Hub) handleRequestSync(client *Client) {
 		ServerTime:         time.Now().UnixMilli(),
 	}
 
-	client.Send <- mustJSON(&models.WSEvent{
+	client.SendMessage(mustJSON(&models.WSEvent{
 		Type:       "room_state",
 		Payload:    syncPayload,
 		ServerTime: time.Now().UnixMilli(),
-	})
+	}))
 }
 
 // CloseRoom terminates all connections in a room with a shutdown event
@@ -291,11 +307,8 @@ func (h *Hub) CloseRoom(roomCode string, reason string) {
 	msg := mustJSON(event)
 
 	for client := range clients {
-		select {
-		case client.Send <- msg:
-		default:
-		}
-		close(client.Send)
+		client.SendMessage(msg)
+		client.CloseSend()
 	}
 	delete(h.rooms, upper)
 	log.Printf("[ws] room %s shut down: %s", upper, reason)
@@ -319,11 +332,9 @@ func (h *Hub) broadcastToRoomLocked(roomCode string, event *models.WSEvent, excl
 		if client == exclude {
 			continue
 		}
-		select {
-		case client.Send <- msg:
-		default:
-			// Client buffer full, close connection
-			close(client.Send)
+		if !client.SendMessage(msg) {
+			// Client buffer full or closed, safely clean up
+			client.CloseSend()
 			delete(clients, client)
 		}
 	}

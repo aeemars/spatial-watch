@@ -2,6 +2,7 @@ package websocket
 
 import (
 	"log"
+	"sync"
 	"time"
 
 	"github.com/gorilla/websocket"
@@ -26,6 +27,35 @@ type Client struct {
 	RoomCode      string
 	ParticipantID string
 	DisplayName   string
+
+	mu     sync.Mutex
+	closed bool
+}
+
+// SendMessage safely enqueues a message for transmission without panicking if closed
+func (c *Client) SendMessage(msg []byte) bool {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.closed {
+		return false
+	}
+	select {
+	case c.Send <- msg:
+		return true
+	default:
+		// Client buffer full
+		return false
+	}
+}
+
+// CloseSend safely closes the send channel once
+func (c *Client) CloseSend() {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if !c.closed {
+		c.closed = true
+		close(c.Send)
+	}
 }
 
 // ReadPump pumps messages from the WebSocket connection to the hub

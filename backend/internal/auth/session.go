@@ -271,22 +271,32 @@ func (s *AuthService) ClearSessionCookie(w http.ResponseWriter) {
 	http.SetCookie(w, cookie)
 }
 
-// getClientIP extracts IP address from request (handling proxies)
+// getClientIP extracts IP address from request (handling Cloudflare & reverse proxies safely)
 func getClientIP(r *http.Request) string {
+	if cfIP := strings.TrimSpace(r.Header.Get("CF-Connecting-IP")); cfIP != "" {
+		if ip := net.ParseIP(cfIP); ip != nil {
+			return ip.String()
+		}
+	}
 	if xff := r.Header.Get("X-Forwarded-For"); xff != "" {
 		parts := strings.Split(xff, ",")
 		if len(parts) > 0 {
 			ip := strings.TrimSpace(parts[0])
-			if ip != "" {
-				return ip
+			if parsed := net.ParseIP(ip); parsed != nil {
+				return parsed.String()
 			}
 		}
 	}
-	if xrip := r.Header.Get("X-Real-IP"); xrip != "" {
-		return strings.TrimSpace(xrip)
+	if xrip := strings.TrimSpace(r.Header.Get("X-Real-IP")); xrip != "" {
+		if ip := net.ParseIP(xrip); ip != nil {
+			return ip.String()
+		}
 	}
 	host, _, err := net.SplitHostPort(r.RemoteAddr)
 	if err == nil {
+		if ip := net.ParseIP(host); ip != nil {
+			return ip.String()
+		}
 		return host
 	}
 	return r.RemoteAddr

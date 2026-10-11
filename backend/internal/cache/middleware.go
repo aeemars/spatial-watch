@@ -22,7 +22,8 @@ func Middleware() func(http.Handler) http.Handler {
 
 			// 2. Uploaded videos: NO CACHING since they are ephemeral and deleted after streaming.
 			// Still require Accept-Ranges and CORS for WebGL video textures.
-			if strings.HasPrefix(path, "/assets/uploads/") && strings.HasSuffix(strings.ToLower(path), ".mp4") {
+			lowerPath := strings.ToLower(path)
+			if strings.HasPrefix(path, "/assets/uploads/") && (strings.HasSuffix(lowerPath, ".mp4") || strings.HasSuffix(lowerPath, ".webm") || strings.HasSuffix(lowerPath, ".mov")) {
 				w.Header().Set("Cache-Control", "no-store, no-cache, must-revalidate, private")
 				w.Header().Set("Accept-Ranges", "bytes")
 				w.Header().Set("Access-Control-Allow-Origin", "*")
@@ -32,7 +33,7 @@ func Middleware() func(http.Handler) http.Handler {
 			}
 
 			// 2b. Bundled static catalog videos: Cache allowed
-			if strings.HasPrefix(path, "/assets/videos/") && strings.HasSuffix(strings.ToLower(path), ".mp4") {
+			if strings.HasPrefix(path, "/assets/videos/") && strings.HasSuffix(lowerPath, ".mp4") {
 				w.Header().Set("Cache-Control", "public, max-age=86400")
 				w.Header().Set("Accept-Ranges", "bytes")
 				w.Header().Set("Access-Control-Allow-Origin", "*")
@@ -50,14 +51,14 @@ func Middleware() func(http.Handler) http.Handler {
 				strings.HasSuffix(path, ".png") ||
 				strings.HasSuffix(path, ".ico") ||
 				strings.HasSuffix(path, ".webp") {
-				w.Header().Set("Cache-Control", "no-cache") // Changed from immutable for development
+				w.Header().Set("Cache-Control", "public, max-age=604800, immutable")
 				next.ServeHTTP(w, r)
 				return
 			}
 
-			// 4. HTML root and entry pages: no-cache
+			// 4. HTML root and entry pages: 5 min TTL with revalidation
 			if path == "/" || strings.HasSuffix(path, ".html") {
-				w.Header().Set("Cache-Control", "no-store, no-cache, must-revalidate")
+				w.Header().Set("Cache-Control", "public, max-age=300, must-revalidate")
 				next.ServeHTTP(w, r)
 				return
 			}

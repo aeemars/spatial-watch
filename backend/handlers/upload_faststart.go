@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"context"
 	"fmt"
 	"io"
 	"log"
@@ -74,7 +75,7 @@ func (h *Handler) UploadFastStart(w http.ResponseWriter, r *http.Request) {
 	out.Close()
 	defer os.Remove(rawPath)
 
-	// 2. Run ffmpeg faststart
+	// 2. Run ffmpeg faststart with timeout
 	fastPath := filepath.Join("/tmp", randomID+"_fast"+ext)
 	ffmpegBin := "ffmpeg"
 	if _, err := exec.LookPath("ffmpeg"); err != nil {
@@ -84,12 +85,15 @@ func (h *Handler) UploadFastStart(w http.ResponseWriter, r *http.Request) {
 			ffmpegBin = "./ffmpeg"
 		}
 	}
-	cmd := exec.Command(ffmpegBin, "-i", rawPath, "-c", "copy", "-movflags", "faststart", fastPath)
+	ffmpegCtx, ffmpegCancel := context.WithTimeout(r.Context(), 3*time.Minute)
+	cmd := exec.CommandContext(ffmpegCtx, ffmpegBin, "-i", rawPath, "-c", "copy", "-movflags", "faststart", fastPath)
 	if err := cmd.Run(); err != nil {
+		ffmpegCancel()
 		log.Printf("[upload] ffmpeg faststart error: %v", err)
 		// Fallback to uploading the raw file if ffmpeg fails
 		fastPath = rawPath
 	} else {
+		ffmpegCancel()
 		defer os.Remove(fastPath)
 	}
 
@@ -114,7 +118,7 @@ func (h *Handler) UploadFastStart(w http.ResponseWriter, r *http.Request) {
 	}
 	defer fastFile.Close()
 
-	reqPut, err := http.NewRequest("PUT", res.UploadURL, fastFile)
+	reqPut, err := http.NewRequestWithContext(r.Context(), "PUT", res.UploadURL, fastFile)
 	if err != nil {
 		respondError(w, http.StatusInternalServerError, "Failed to create upload request")
 		return
@@ -122,7 +126,7 @@ func (h *Handler) UploadFastStart(w http.ResponseWriter, r *http.Request) {
 	reqPut.Header.Set("Content-Type", cType)
 	reqPut.ContentLength = fileInfo.Size()
 
-	client := &http.Client{}
+	client := &http.Client{Timeout: 10 * time.Minute}
 	respPut, err := client.Do(reqPut)
 	if err != nil {
 		log.Printf("[upload] upload to R2 failed: err=%v", err)
