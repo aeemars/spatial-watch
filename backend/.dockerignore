@@ -1,0 +1,8 @@
+.env
+*.mp4
+*.bin
+ffmpeg
+spatialwatch
+spatialwatch-server
+*.test
+*.out
