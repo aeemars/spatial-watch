@@ -52,8 +52,17 @@ func Load() *Config {
 		sessionDuration = 30
 	}
 
-	cookieSameSite := strings.ToLower(strings.TrimSpace(getEnv("COOKIE_SAMESITE", "lax")))
-	if cookieSameSite != "none" && cookieSameSite != "strict" && cookieSameSite != "lax" {
+	cookieSameSite := strings.ToLower(strings.TrimSpace(getEnv("COOKIE_SAMESITE", "")))
+	if cookieSameSite == "" {
+		// When PUBLIC_BASE_URL is HTTPS (e.g. cloud deployment like Pxxl), default to "none"
+		// so cross-site requests from Cloudflare Workers/Pages retain authenticated session cookies.
+		publicURL := getEnv("PUBLIC_BASE_URL", "")
+		if strings.HasPrefix(strings.ToLower(publicURL), "https://") {
+			cookieSameSite = "none"
+		} else {
+			cookieSameSite = "lax"
+		}
+	} else if cookieSameSite != "none" && cookieSameSite != "strict" && cookieSameSite != "lax" {
 		cookieSameSite = "lax"
 	}
 
@@ -88,6 +97,13 @@ func Load() *Config {
 			if trimmed != "" {
 				corsOrigins = append(corsOrigins, trimmed)
 			}
+		}
+	} else {
+		// Cloudflare Workers and Pages defaults for frontend deployments
+		corsOrigins = []string{
+			"https://*.workers.dev",
+			"https://*.pages.dev",
+			"https://spatial-watch.aeemarrs.workers.dev",
 		}
 	}
 

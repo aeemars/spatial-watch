@@ -21,6 +21,9 @@
 /css/*
   Cache-Control: public, max-age=604800, immutable
 
+/js/config.js
+  Cache-Control: no-cache, no-store, must-revalidate
+
 /js/*
   Cache-Control: public, max-age=604800, immutable
 
