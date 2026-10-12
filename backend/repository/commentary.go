@@ -120,3 +120,22 @@ func (r *CommentaryRepo) Count(ctx context.Context, filter bson.M) (int64, error
 	}
 	return int64(len(r.cues)), nil
 }
+
+// DeleteByTemplateRef removes commentary cues matching a templateRef
+func (r *CommentaryRepo) DeleteByTemplateRef(ctx context.Context, templateRef string) error {
+	if r.col != nil {
+		_, err := r.col.DeleteMany(ctx, bson.M{"templateRef": templateRef})
+		return err
+	}
+
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	filtered := make([]models.CommentaryCue, 0)
+	for _, c := range r.cues {
+		if c.TemplateRef != templateRef {
+			filtered = append(filtered, c)
+		}
+	}
+	r.cues = filtered
+	return nil
+}

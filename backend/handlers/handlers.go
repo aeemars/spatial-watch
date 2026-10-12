@@ -290,14 +290,14 @@ func (h *Handler) CreateRoom(w http.ResponseWriter, r *http.Request) {
 			resolvedDuration = req.DurationSeconds
 		}
 	} else {
-		// Default screening: Big Buck Bunny from catalog or fallback
+		// Default screening: Coffee Run from catalog or fallback
 		mediaSourceType = "catalog"
-		resolvedAssetID = "big-buck-bunny"
-		resolvedMediaTitle = "Big Buck Bunny"
-		resolvedMediaURL = "/assets/videos/big-buck-bunny.mp4"
-		resolvedDuration = 596
+		resolvedAssetID = "coffee-run"
+		resolvedMediaTitle = "Coffee Run - Blender Open Movie"
+		resolvedMediaURL = "https://pub-e68e9acfc40b4388b0444968a7672e9e.r2.dev/Coffee_Run.mp4"
+		resolvedDuration = 184
 		if h.MediaAssetRepo != nil {
-			if asset, err := h.MediaAssetRepo.FindByAssetID(ctx, "big-buck-bunny"); err == nil && asset != nil {
+			if asset, err := h.MediaAssetRepo.FindByAssetID(ctx, "coffee-run"); err == nil && asset != nil {
 				resolvedAssetID = asset.AssetID
 				resolvedMediaTitle = asset.Title
 				resolvedMediaURL = asset.MediaURL
@@ -460,7 +460,7 @@ func (h *Handler) GetRoom(w http.ResponseWriter, r *http.Request) {
 
 	// Auto-heal legacy 403 Google Cloud Storage URLs for catalog films
 	if strings.Contains(room.MediaURL, "commondatastorage.googleapis.com") {
-		healedURL := "/assets/videos/big-buck-bunny.mp4"
+		healedURL := "https://pub-e68e9acfc40b4388b0444968a7672e9e.r2.dev/Coffee_Run.mp4"
 		if h.MediaAssetRepo != nil && room.MediaAssetID != "" {
 			if asset, err := h.MediaAssetRepo.FindByAssetID(ctx, room.MediaAssetID); err == nil && asset != nil {
 				healedURL = asset.MediaURL

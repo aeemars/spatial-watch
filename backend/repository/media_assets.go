@@ -186,3 +186,20 @@ func (r *MediaAssetRepo) Upsert(ctx context.Context, asset *models.MediaAsset) e
 	return nil
 }
 
+// DeleteByAssetID removes a media asset matching its assetId
+func (r *MediaAssetRepo) DeleteByAssetID(ctx context.Context, assetID string) error {
+	cleanID := strings.TrimSpace(strings.ToLower(assetID))
+	if cleanID == "" {
+		return nil
+	}
+	if r.col != nil {
+		_, err := r.col.DeleteOne(ctx, bson.M{"assetId": cleanID})
+		return err
+	}
+
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	delete(r.assets, cleanID)
+	return nil
+}
+

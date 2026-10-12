@@ -647,27 +647,27 @@ func TestGetMediaAssetsCatalog(t *testing.T) {
 		t.Fatalf("Failed to decode media assets: %v", err)
 	}
 
-	if len(assets) < 4 {
-		t.Fatalf("Expected at least 4 catalog assets seeded, got %d", len(assets))
+	if len(assets) < 2 {
+		t.Fatalf("Expected at least 2 catalog assets seeded, got %d", len(assets))
 	}
 
-	foundBBB := false
+	foundCoffee := false
 	for _, a := range assets {
-		if a.AssetID == "big-buck-bunny" {
-			foundBBB = true
-			if (!strings.HasPrefix(a.MediaURL, "https://") && !strings.HasPrefix(a.MediaURL, "/assets/")) || !strings.HasSuffix(a.MediaURL, ".mp4") {
-				t.Fatalf("Big Buck Bunny URL must be valid MP4, got %s", a.MediaURL)
+		if a.AssetID == "coffee-run" {
+			foundCoffee = true
+			if !strings.HasPrefix(a.MediaURL, "https://") || !strings.HasSuffix(a.MediaURL, ".mp4") {
+				t.Fatalf("Coffee Run URL must be valid MP4, got %s", a.MediaURL)
 			}
 			if !a.CORSReady {
-				t.Fatalf("Expected Big Buck Bunny to have CORSReady = true")
+				t.Fatalf("Expected Coffee Run to have CORSReady = true")
 			}
 			if !a.DirectorCutAvailable {
-				t.Fatalf("Expected Big Buck Bunny to have DirectorCutAvailable = true")
+				t.Fatalf("Expected Coffee Run to have DirectorCutAvailable = true")
 			}
 		}
 	}
-	if !foundBBB {
-		t.Fatalf("Seeded catalog must contain big-buck-bunny")
+	if !foundCoffee {
+		t.Fatalf("Seeded catalog must contain coffee-run")
 	}
 }
 
@@ -694,14 +694,14 @@ func TestCreateRoom_DefaultMedia(t *testing.T) {
 	if resp.MediaSourceType != "catalog" {
 		t.Fatalf("Expected mediaSourceType 'catalog', got %q", resp.MediaSourceType)
 	}
-	if resp.MediaAssetID != "big-buck-bunny" {
-		t.Fatalf("Expected default mediaAssetId 'big-buck-bunny', got %q", resp.MediaAssetID)
+	if resp.MediaAssetID != "coffee-run" {
+		t.Fatalf("Expected default mediaAssetId 'coffee-run', got %q", resp.MediaAssetID)
 	}
-	if resp.MediaTitle != "Big Buck Bunny" {
-		t.Fatalf("Expected default mediaTitle 'Big Buck Bunny', got %q", resp.MediaTitle)
+	if resp.MediaTitle != "Coffee Run - Blender Open Movie" {
+		t.Fatalf("Expected default mediaTitle 'Coffee Run - Blender Open Movie', got %q", resp.MediaTitle)
 	}
-	if resp.DurationSeconds <= 0 {
-		t.Fatalf("Expected positive durationSeconds for default media, got %f", resp.DurationSeconds)
+	if resp.DurationSeconds != 184 {
+		t.Fatalf("Expected durationSeconds 184 for default media, got %f", resp.DurationSeconds)
 	}
 }
 
@@ -710,8 +710,8 @@ func TestCreateRoom_CatalogSelection(t *testing.T) {
 	_, cookie := createTestGuestSession(t, rig)
 
 	body, _ := json.Marshal(models.CreateRoomRequest{
-		RoomName:     "Tears of Steel Cinema",
-		MediaAssetID: "tears-of-steel",
+		RoomName:     "Glass Half Cinema",
+		MediaAssetID: "glass-half",
 	})
 	req, _ := http.NewRequest("POST", "/api/rooms", bytes.NewBuffer(body))
 	req.Header.Set("Content-Type", "application/json")
@@ -729,14 +729,14 @@ func TestCreateRoom_CatalogSelection(t *testing.T) {
 	if resp.MediaSourceType != "catalog" {
 		t.Fatalf("Expected mediaSourceType 'catalog', got %q", resp.MediaSourceType)
 	}
-	if resp.MediaAssetID != "tears-of-steel" {
-		t.Fatalf("Expected mediaAssetId 'tears-of-steel', got %q", resp.MediaAssetID)
+	if resp.MediaAssetID != "glass-half" {
+		t.Fatalf("Expected mediaAssetId 'glass-half', got %q", resp.MediaAssetID)
 	}
-	if resp.MediaTitle != "Tears of Steel" {
-		t.Fatalf("Expected mediaTitle 'Tears of Steel', got %q", resp.MediaTitle)
+	if resp.MediaTitle != "Glass Half - Blender animated cartoon" {
+		t.Fatalf("Expected mediaTitle 'Glass Half - Blender animated cartoon', got %q", resp.MediaTitle)
 	}
-	if resp.DurationSeconds != 734 {
-		t.Fatalf("Expected duration 734s, got %f", resp.DurationSeconds)
+	if resp.DurationSeconds != 193 {
+		t.Fatalf("Expected duration 193s, got %f", resp.DurationSeconds)
 	}
 }
 
@@ -854,9 +854,9 @@ func TestCreateRoom_MutuallyExclusiveMedia(t *testing.T) {
 
 	body, _ := json.Marshal(models.CreateRoomRequest{
 		RoomName:     "Conflict Room",
-		MediaAssetID: "big-buck-bunny",
+		MediaAssetID: "coffee-run",
 		MediaURL:     "https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/Sintel.mp4",
-		MediaTitle:   "Sintel",
+		MediaTitle:   "Custom Film",
 	})
 	req, _ := http.NewRequest("POST", "/api/rooms", bytes.NewBuffer(body))
 	req.Header.Set("Content-Type", "application/json")
@@ -875,7 +875,7 @@ func TestGetUserRooms_IncludesMediaSnapshot(t *testing.T) {
 
 	body, _ := json.Marshal(models.CreateRoomRequest{
 		RoomName:     "Catalog Screening Room",
-		MediaAssetID: "sintel",
+		MediaAssetID: "glass-half",
 	})
 	req, _ := http.NewRequest("POST", "/api/rooms", bytes.NewBuffer(body))
 	req.Header.Set("Content-Type", "application/json")
@@ -907,17 +907,17 @@ func TestGetUserRooms_IncludesMediaSnapshot(t *testing.T) {
 	}
 
 	record := userRooms.CreatedRooms[0]
-	if record.MediaTitle != "Sintel" {
-		t.Fatalf("Expected mediaTitle 'Sintel', got %q", record.MediaTitle)
+	if record.MediaTitle != "Glass Half - Blender animated cartoon" {
+		t.Fatalf("Expected mediaTitle 'Glass Half - Blender animated cartoon', got %q", record.MediaTitle)
 	}
 	if record.MediaSourceType != "catalog" {
 		t.Fatalf("Expected mediaSourceType 'catalog', got %q", record.MediaSourceType)
 	}
-	if record.MediaAssetID != "sintel" {
-		t.Fatalf("Expected mediaAssetId 'sintel', got %q", record.MediaAssetID)
+	if record.MediaAssetID != "glass-half" {
+		t.Fatalf("Expected mediaAssetId 'glass-half', got %q", record.MediaAssetID)
 	}
-	if record.DurationSeconds != 888 {
-		t.Fatalf("Expected duration 888s, got %f", record.DurationSeconds)
+	if record.DurationSeconds != 193 {
+		t.Fatalf("Expected duration 193s, got %f", record.DurationSeconds)
 	}
 }
 
@@ -928,7 +928,7 @@ func TestGetRoom_AutoHealsLegacy403MediaURL(t *testing.T) {
 	// Create room
 	body, _ := json.Marshal(models.CreateRoomRequest{
 		RoomName:     "Legacy Test Room",
-		MediaAssetID: "big-buck-bunny",
+		MediaAssetID: "coffee-run",
 	})
 	req, _ := http.NewRequest("POST", "/api/rooms", bytes.NewBuffer(body))
 	req.Header.Set("Content-Type", "application/json")
@@ -959,8 +959,8 @@ func TestGetRoom_AutoHealsLegacy403MediaURL(t *testing.T) {
 	}
 	_ = json.Unmarshal(rrGet.Body.Bytes(), &getResp)
 
-	// Should be auto-healed to the local bundled asset
-	expectedHealedURL := "/assets/videos/big-buck-bunny.mp4"
+	// Should be auto-healed to the catalog asset
+	expectedHealedURL := "https://pub-e68e9acfc40b4388b0444968a7672e9e.r2.dev/Coffee_Run.mp4"
 	if getResp.Room.MediaURL != expectedHealedURL {
 		t.Fatalf("Expected legacy media URL to be auto-healed to %q, got %q", expectedHealedURL, getResp.Room.MediaURL)
 	}
@@ -976,10 +976,10 @@ func TestRoom_ExpiresAtCalculation(t *testing.T) {
 	rig := setupTestRig()
 	_, cookie := createTestGuestSession(t, rig)
 
-	// Create room with a known catalog asset (big-buck-bunny, 596s)
+	// Create room with a known catalog asset (coffee-run, 184s)
 	body, _ := json.Marshal(models.CreateRoomRequest{
 		RoomName:     "Ephemeral Test Room",
-		MediaAssetID: "big-buck-bunny",
+		MediaAssetID: "coffee-run",
 	})
 	req, _ := http.NewRequest("POST", "/api/rooms", bytes.NewBuffer(body))
 	req.Header.Set("Content-Type", "application/json")

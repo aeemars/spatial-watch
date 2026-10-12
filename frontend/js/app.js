@@ -19,7 +19,7 @@ const App = (() => {
 
   // Media Catalog Selection State
   let catalogAssets = [];
-  let selectedAssetId = 'big-buck-bunny';
+  let selectedAssetId = 'coffee-run';
   let activeMediaSource = 'catalog'; // 'catalog' | 'custom'
 
   // ─── Initialization ───────────────────────────────
