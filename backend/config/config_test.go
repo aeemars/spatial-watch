@@ -108,3 +108,19 @@ func TestExtractDatabaseFromURI(t *testing.T) {
 		}
 	}
 }
+
+func TestIsValidMongoURI(t *testing.T) {
+	if !IsValidMongoURI("mongodb+srv://user:pass@cluster.mongodb.net/db") {
+		t.Error("Expected mongodb+srv:// to be valid")
+	}
+	if !IsValidMongoURI("mongodb://localhost:27017") {
+		t.Error("Expected mongodb:// to be valid")
+	}
+	if IsValidMongoURI("beth") {
+		t.Error("Expected 'beth' to be invalid")
+	}
+	if IsValidMongoURI("") {
+		t.Error("Expected empty string to be invalid")
+	}
+}
+

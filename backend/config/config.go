@@ -107,23 +107,62 @@ func Load() *Config {
 		}
 	}
 
-	mongoURI := CleanMongoURI(getEnv("MONGODB_URI", ""))
-	if mongoURI == "" {
-		mongoURI = CleanMongoURI(getEnv("MONGO_URI", ""))
-	}
-	if mongoURI == "" {
-		mongoURI = CleanMongoURI(getEnv("DATABASE_URL", ""))
-	}
-	if mongoURI == "" {
-		mongoURI = "mongodb://localhost:27017"
+	rawMongoURI := CleanMongoURI(getEnv("MONGODB_URI", ""))
+	rawDBName := getEnv("DATABASE_NAME", "")
+
+	var mongoURI string
+	var dbName string
+
+	// Check candidate keys for a valid MongoDB connection string
+	candidates := []string{
+		rawMongoURI,
+		CleanMongoURI(getEnv("MONGO_URI", "")),
+		CleanMongoURI(getEnv("MONGODB_URL", "")),
+		CleanMongoURI(getEnv("MONGO_URL", "")),
+		CleanMongoURI(getEnv("DATABASE_URL", "")),
+		CleanMongoURI(rawDBName), // In case user swapped MONGODB_URI and DATABASE_NAME in cloud dashboard
 	}
 
-	dbName := getEnv("DATABASE_NAME", "")
-	if dbName == "" {
+	for _, cand := range candidates {
+		if IsValidMongoURI(cand) {
+			mongoURI = cand
+			break
+		}
+	}
+
+	// If still not found, scan all environment variables in case of non-standard key
+	if mongoURI == "" {
+		for _, env := range os.Environ() {
+			if idx := strings.Index(env, "="); idx != -1 {
+				val := CleanMongoURI(env[idx+1:])
+				if IsValidMongoURI(val) {
+					mongoURI = val
+					break
+				}
+			}
+		}
+	}
+
+	// Resolve database name: if MONGODB_URI was set to a plain name like "beth", treat it as the database name
+	if rawDBName != "" && !IsValidMongoURI(rawDBName) {
+		dbName = rawDBName
+	} else if rawMongoURI != "" && !IsValidMongoURI(rawMongoURI) {
+		dbName = rawMongoURI
+	}
+
+	if dbName == "" && mongoURI != "" {
 		dbName = ExtractDatabaseFromURI(mongoURI)
 	}
 	if dbName == "" {
 		dbName = "spatialwatch"
+	}
+
+	if mongoURI == "" {
+		if rawMongoURI != "" {
+			mongoURI = rawMongoURI // preserve invalid URI for explicit diagnostic logging
+		} else {
+			mongoURI = "mongodb://localhost:27017"
+		}
 	}
 
 	return &Config{
@@ -142,6 +181,12 @@ func Load() *Config {
 		R2BucketName:        getEnv("R2_BUCKET_NAME", "spatialwatch-media"),
 		R2PublicURL:         getEnv("R2_PUBLIC_URL", ""),
 	}
+}
+
+// IsValidMongoURI checks if a connection string begins with mongodb:// or mongodb+srv://
+func IsValidMongoURI(uri string) bool {
+	u := strings.ToLower(strings.TrimSpace(uri))
+	return strings.HasPrefix(u, "mongodb://") || strings.HasPrefix(u, "mongodb+srv://")
 }
 
 // ExtractDatabaseFromURI extracts the database name from a MongoDB connection string path if present

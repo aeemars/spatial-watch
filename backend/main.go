@@ -40,7 +40,12 @@ func main() {
 
 	// Attempt MongoDB connection with v2 driver (10s ping timeout, fallback to in-memory store)
 	var db *mongo.Database
-	if cfg.MongoURI != "" && !strings.Contains(cfg.MongoURI, "<user>") {
+	if cfg.MongoURI != "" && !config.IsValidMongoURI(cfg.MongoURI) {
+		log.Printf("  WARNING: MONGODB_URI is set to %q which is not a valid connection string.", cfg.MongoURI)
+		log.Println("  -> MongoDB connection strings must start with 'mongodb://' or 'mongodb+srv://'.")
+		log.Printf("  -> If %q is your database name, set it in the DATABASE_NAME field instead.", cfg.MongoURI)
+		log.Println("  -> Falling back to in-memory store until a valid MONGODB_URI is provided.")
+	} else if cfg.MongoURI != "" && !strings.Contains(cfg.MongoURI, "<user>") {
 		masked := config.MaskMongoURI(cfg.MongoURI)
 		log.Printf("  Connecting to MongoDB (%s)...", masked)
 		clientOpts := options.Client().
