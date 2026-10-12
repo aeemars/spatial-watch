@@ -17,35 +17,8 @@ const App = (() => {
   let currentUser = null;
   let hostParticipantId = '';
 
-  // Built-in resilient media catalog fallback (the 2 user-optimized films)
-  const FALLBACK_MEDIA_CATALOG = [
-    {
-      assetId: 'coffee-run',
-      title: 'Coffee Run - Blender Open Movie',
-      description: 'Fueled by caffeine, a young woman runs through the bittersweet memories of her past relationship.',
-      durationSeconds: 184,
-      posterUrl: 'https://pub-e68e9acfc40b4388b0444968a7672e9e.r2.dev/Coffee_Run%20poster.png',
-      gradient: 'linear-gradient(135deg, #4a2c11 0%, #1a0f05 100%)',
-      mediaUrl: 'https://pub-e68e9acfc40b4388b0444968a7672e9e.r2.dev/Coffee_Run.mp4',
-      corsReady: true,
-      directorCutAvailable: true,
-      commentaryTemplateRef: 'default'
-    },
-    {
-      assetId: 'glass-half',
-      title: 'Glass Half - Blender animated cartoon',
-      description: 'Two amateur art critics meet in a gallery and argue passionately about the pieces they see, until finally they find a piece on which they can agree.',
-      durationSeconds: 193,
-      posterUrl: 'https://pub-e68e9acfc40b4388b0444968a7672e9e.r2.dev/Glass_Half_Poster.png',
-      gradient: 'linear-gradient(135deg, #1e3a5f 0%, #0c1827 100%)',
-      mediaUrl: 'https://pub-e68e9acfc40b4388b0444968a7672e9e.r2.dev/Glass_Half.mp4',
-      corsReady: true,
-      directorCutAvailable: false
-    }
-  ];
-
-  // Media Catalog Selection State (pre-populated so UI is immediately ready)
-  let catalogAssets = [...FALLBACK_MEDIA_CATALOG];
+  // Media Catalog Selection State
+  let catalogAssets = [];
   let selectedAssetId = 'coffee-run';
   let activeMediaSource = 'catalog'; // 'catalog' | 'custom'
 
@@ -754,35 +727,24 @@ const App = (() => {
   }
 
   async function loadMediaCatalog() {
-    // 1. Immediately render current/fallback catalog without waiting for network
-    if (catalogAssets && catalogAssets.length > 0) {
-      renderCatalogCards(catalogAssets);
-      probeAndEnrichCatalog(catalogAssets);
-    }
-
-    // 2. Fetch fresh catalog from API or static JSON asset
     try {
-      let assets = null;
-      try {
-        assets = await API.getMediaAssets();
-      } catch (apiErr) {
-        // Fallback: fetch bundled static assets/catalog.json
-        const staticResp = await fetch('assets/catalog.json').catch(() => null);
-        if (staticResp && staticResp.ok) {
-          assets = await staticResp.json().catch(() => null);
-        }
-      }
-
+      const assets = await API.getMediaAssets();
       if (Array.isArray(assets) && assets.length > 0) {
         catalogAssets = assets;
         renderCatalogCards(assets);
+
+        // Dynamically probe video files to display exact real-time duration & details
         probeAndEnrichCatalog(assets);
       }
     } catch (e) {
-      console.warn('[app] dynamic catalog refresh error, maintaining fallback catalog:', e);
-      if (!catalogAssets || catalogAssets.length === 0) {
-        catalogAssets = [...FALLBACK_MEDIA_CATALOG];
-        renderCatalogCards(catalogAssets);
+      console.warn('[app] failed to load media catalog:', e);
+      const listEl = document.getElementById('catalog-card-list');
+      if (listEl) {
+        listEl.innerHTML = `
+          <div class="catalog-loading">
+            <span>Unable to load catalog. You can still use a custom hosted MP4 URL.</span>
+          </div>
+        `;
       }
     }
   }

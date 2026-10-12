@@ -18,10 +18,9 @@ const WS = (() => {
       const base = window.ENV_WS_URL.trim().replace(/\/+$/, '');
       return `${base}/ws?roomCode=${encodeURIComponent(roomCode)}`;
     }
-    const apiBase = (typeof API !== 'undefined' && API.getBase) ? API.getBase() : (window.ENV_API_URL || '');
-    if (apiBase) {
+    if (window.ENV_API_URL && typeof window.ENV_API_URL === 'string' && window.ENV_API_URL.trim() !== '') {
       try {
-        const u = new URL(apiBase.trim());
+        const u = new URL(window.ENV_API_URL.trim());
         const wsProto = u.protocol === 'https:' ? 'wss:' : 'ws:';
         return `${wsProto}//${u.host}/ws?roomCode=${encodeURIComponent(roomCode)}`;
       } catch (e) {

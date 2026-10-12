@@ -4,8 +4,7 @@
    ═══════════════════════════════════════════════════════════ */
 
 const API = (() => {
-  const FALLBACK_BACKEND_URL = 'https://spatial-watch.pxxlspace.cv';
-  let activeBase = (window.ENV_API_URL && typeof window.ENV_API_URL === 'string' && window.ENV_API_URL.trim() !== '')
+  const BASE = (window.ENV_API_URL && typeof window.ENV_API_URL === 'string' && window.ENV_API_URL.trim() !== '')
     ? window.ENV_API_URL.trim().replace(/\/+$/, '')
     : window.location.origin;
   let sessionPromise = null;
@@ -18,25 +17,7 @@ const API = (() => {
     };
     if (body !== undefined) opts.body = JSON.stringify(body);
 
-    let res;
-    try {
-      res = await fetch(`${activeBase}${path}`, opts);
-    } catch (netErr) {
-      // If network error occurred reaching the current activeBase, fail over to direct PXXL backend
-      if (activeBase !== FALLBACK_BACKEND_URL) {
-        console.warn(`[api] failed to reach ${activeBase}, falling back to ${FALLBACK_BACKEND_URL}:`, netErr);
-        activeBase = FALLBACK_BACKEND_URL;
-        return await request(method, path, body, isRetry);
-      }
-      throw netErr;
-    }
-
-    // Auto-failover: if Cloudflare edge returns 404 for an API endpoint (e.g. edge proxy not configured)
-    if (res.status === 404 && path.startsWith('/api/') && activeBase !== FALLBACK_BACKEND_URL) {
-      console.warn(`[api] ${activeBase}${path} returned 404 (edge proxy inactive), switching to direct backend: ${FALLBACK_BACKEND_URL}`);
-      activeBase = FALLBACK_BACKEND_URL;
-      return await request(method, path, body, isRetry);
-    }
+    const res = await fetch(`${BASE}${path}`, opts);
 
     if (res.status === 204) {
       return null;
@@ -70,11 +51,6 @@ const API = (() => {
   }
 
   return {
-    /** Get currently active base URL */
-    getBase() {
-      return activeBase;
-    },
-
     /** Get or create authenticated guest session (deduplicated) */
     getSession,
 
