@@ -27,11 +27,13 @@ type testRig struct {
 	Router      *mux.Router
 	AuthService *auth.AuthService
 	RoomRepo    *repository.RoomRepo
+	ExpiredRepo *repository.ExpiredRoomRepo
 	PartRepo    *repository.ParticipantRepo
 }
 
 func setupTestRig() *testRig {
 	roomRepo := repository.NewRoomRepo(nil)
+	expiredRepo := repository.NewExpiredRoomRepo(nil)
 	partRepo := repository.NewParticipantRepo(nil)
 	commentRepo := repository.NewCommentaryRepo(nil)
 	reactionRepo := repository.NewReactionRepo(nil)
@@ -49,6 +51,7 @@ func setupTestRig() *testRig {
 	seed.Run(commentRepo, mediaRepo)
 	hub := ws.NewHub(roomRepo, partRepo, reactionRepo)
 	h := handlers.NewHandler(roomRepo, partRepo, commentRepo, reactionRepo, hub, authService, mediaRepo, nil)
+	h.SetExpiredRoomRepo(expiredRepo)
 	r2Storage, _ := storage.NewR2Storage(cfg)
 	h.SetStorage(r2Storage)
 
@@ -90,6 +93,7 @@ func setupTestRig() *testRig {
 		Router:      r,
 		AuthService: authService,
 		RoomRepo:    roomRepo,
+		ExpiredRepo: expiredRepo,
 		PartRepo:    partRepo,
 	}
 }
@@ -1202,6 +1206,148 @@ func TestRoomCreation_WithUploadedMedia(t *testing.T) {
 	expectedMinExpiry := room.CreatedAt.Add(time.Duration(420+300) * time.Second)
 	if room.ExpiresAt.Before(expectedMinExpiry.Add(-2 * time.Second)) {
 		t.Fatalf("ExpiresAt %v is earlier than expected minimum %v", room.ExpiresAt, expectedMinExpiry)
+	}
+}
+
+func TestGetUserRooms_IncludesExpiredAndConcludedRooms(t *testing.T) {
+	rig := setupTestRig()
+	_, hostCookie := createTestGuestSession(t, rig)
+	_, guestCookie := createTestGuestSession(t, rig)
+
+	// Host creates room
+	createBody, _ := json.Marshal(models.CreateRoomRequest{
+		RoomName:     "Sci-Fi Screening",
+		MediaAssetID: "glass-half",
+	})
+	req, _ := http.NewRequest("POST", "/api/rooms", bytes.NewBuffer(createBody))
+	req.Header.Set("Content-Type", "application/json")
+	req.AddCookie(hostCookie)
+	rr := httptest.NewRecorder()
+	rig.Router.ServeHTTP(rr, req)
+	if rr.Code != http.StatusCreated {
+		t.Fatalf("Failed to create room: %d (%s)", rr.Code, rr.Body.String())
+	}
+	var created models.CreateRoomResponse
+	json.Unmarshal(rr.Body.Bytes(), &created)
+
+	// Guest joins room
+	joinBody, _ := json.Marshal(models.JoinRoomRequest{
+		RoomCode:    created.RoomCode,
+		DisplayName: "Guest Attendee",
+	})
+	joinReq, _ := http.NewRequest("POST", "/api/rooms/join", bytes.NewBuffer(joinBody))
+	joinReq.Header.Set("Content-Type", "application/json")
+	joinReq.AddCookie(guestCookie)
+	rrJoin := httptest.NewRecorder()
+	rig.Router.ServeHTTP(rrJoin, joinReq)
+	if rrJoin.Code != http.StatusOK {
+		t.Fatalf("Failed to join room: %d (%s)", rrJoin.Code, rrJoin.Body.String())
+	}
+
+	// Host shuts down room
+	delReq, _ := http.NewRequest("DELETE", "/api/rooms/"+created.RoomCode, nil)
+	delReq.AddCookie(hostCookie)
+	rrDel := httptest.NewRecorder()
+	rig.Router.ServeHTTP(rrDel, delReq)
+	if rrDel.Code != http.StatusOK {
+		t.Fatalf("Failed to shutdown room: %d (%s)", rrDel.Code, rrDel.Body.String())
+	}
+
+	// Host queries user rooms (should include concluded room)
+	hostRoomsReq, _ := http.NewRequest("GET", "/api/user/rooms?includeInactive=true", nil)
+	hostRoomsReq.AddCookie(hostCookie)
+	rrHostRooms := httptest.NewRecorder()
+	rig.Router.ServeHTTP(rrHostRooms, hostRoomsReq)
+	if rrHostRooms.Code != http.StatusOK {
+		t.Fatalf("Failed to get host rooms: %d", rrHostRooms.Code)
+	}
+	var hostRoomsResp models.UserRoomsResponse
+	json.Unmarshal(rrHostRooms.Body.Bytes(), &hostRoomsResp)
+
+	if len(hostRoomsResp.CreatedRooms) != 1 {
+		t.Fatalf("Expected 1 created room record, got %d", len(hostRoomsResp.CreatedRooms))
+	}
+	hostRec := hostRoomsResp.CreatedRooms[0]
+	if hostRec.IsActive {
+		t.Errorf("Expected IsActive=false for concluded room, got true")
+	}
+	if !hostRec.IsCompleted {
+		t.Errorf("Expected IsCompleted=true for concluded room, got false")
+	}
+	if hostRec.ConcludedReason != "host_shutdown" {
+		t.Errorf("Expected ConcludedReason 'host_shutdown', got %q", hostRec.ConcludedReason)
+	}
+
+	// Guest queries user rooms (should include concluded joined room)
+	guestRoomsReq, _ := http.NewRequest("GET", "/api/user/rooms?includeInactive=true", nil)
+	guestRoomsReq.AddCookie(guestCookie)
+	rrGuestRooms := httptest.NewRecorder()
+	rig.Router.ServeHTTP(rrGuestRooms, guestRoomsReq)
+	if rrGuestRooms.Code != http.StatusOK {
+		t.Fatalf("Failed to get guest rooms: %d", rrGuestRooms.Code)
+	}
+	var guestRoomsResp models.UserRoomsResponse
+	json.Unmarshal(rrGuestRooms.Body.Bytes(), &guestRoomsResp)
+
+	if len(guestRoomsResp.JoinedRooms) != 1 {
+		t.Fatalf("Expected 1 joined room record, got %d", len(guestRoomsResp.JoinedRooms))
+	}
+	guestRec := guestRoomsResp.JoinedRooms[0]
+	if guestRec.IsActive {
+		t.Errorf("Expected IsActive=false for guest joined room, got true")
+	}
+	if !guestRec.IsCompleted {
+		t.Errorf("Expected IsCompleted=true for guest joined room, got false")
+	}
+}
+
+func TestReaper_ArchivesConcludedSnapshot(t *testing.T) {
+	rig := setupTestRig()
+	user, hostCookie := createTestGuestSession(t, rig)
+
+	// Create room and force its expiry to the past
+	room := &models.Room{
+		RoomCode:          "EXP01",
+		Name:              "Expired Room",
+		IsActive:          true,
+		HostParticipantID: user.ID,
+		MediaTitle:        "Sample Film",
+		MediaURL:          "https://example.com/sample.mp4",
+		DurationSeconds:   120,
+		ExpiresAt:         time.Now().Add(-5 * time.Minute),
+		CreatedAt:         time.Now().Add(-10 * time.Minute),
+	}
+	if err := rig.RoomRepo.Create(context.Background(), room); err != nil {
+		t.Fatalf("Failed to create test room: %v", err)
+	}
+
+	reaped := rig.Handler.ReapExpiredRooms(context.Background())
+	if reaped != 1 {
+		t.Fatalf("Expected 1 reaped room, got %d", reaped)
+	}
+
+	// Verify archived in ExpiredRepo
+	archived, err := rig.ExpiredRepo.FindByHost(context.Background(), user.ID)
+	if err != nil || len(archived) != 1 {
+		t.Fatalf("Expected 1 archived room in expired repo, got %d (err: %v)", len(archived), err)
+	}
+	if archived[0].ConcludedReason != "timer_expired" {
+		t.Errorf("Expected ConcludedReason 'timer_expired', got %q", archived[0].ConcludedReason)
+	}
+
+	// Verify GET /api/user/rooms returns it
+	req, _ := http.NewRequest("GET", "/api/user/rooms?includeInactive=true", nil)
+	req.AddCookie(hostCookie)
+	rr := httptest.NewRecorder()
+	rig.Router.ServeHTTP(rr, req)
+
+	var userRooms models.UserRoomsResponse
+	json.Unmarshal(rr.Body.Bytes(), &userRooms)
+	if len(userRooms.CreatedRooms) != 1 {
+		t.Fatalf("Expected 1 created room from user rooms, got %d", len(userRooms.CreatedRooms))
+	}
+	if userRooms.CreatedRooms[0].ConcludedReason != "timer_expired" {
+		t.Errorf("Expected ConcludedReason 'timer_expired', got %q", userRooms.CreatedRooms[0].ConcludedReason)
 	}
 }
 

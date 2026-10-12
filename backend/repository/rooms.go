@@ -49,6 +49,11 @@ func NewRoomRepo(db *mongo.Database) *RoomRepo {
 	return repo
 }
 
+// IsMongo returns true if RoomRepo is backed by a live MongoDB database
+func (r *RoomRepo) IsMongo() bool {
+	return r.col != nil
+}
+
 // GenerateRoomCode creates a short human-readable code like SW-AB12
 func GenerateRoomCode() (string, error) {
 	const letters = "ABCDEFGHJKMNPQRSTUVWXYZ"
@@ -205,7 +210,7 @@ func (r *RoomRepo) FindByCodes(ctx context.Context, codes []string) ([]models.Ro
 	return rooms, nil
 }
 
-// Shutdown sets isActive to false for the given room
+// Shutdown sets isActive to false and isCompleted to true for the given room
 func (r *RoomRepo) Shutdown(ctx context.Context, code string) error {
 	upper := strings.ToUpper(code)
 	now := time.Now()
@@ -213,8 +218,9 @@ func (r *RoomRepo) Shutdown(ctx context.Context, code string) error {
 		_, err := r.col.UpdateOne(ctx,
 			bson.M{"roomCode": upper},
 			bson.M{"$set": bson.M{
-				"isActive":  false,
-				"updatedAt": now,
+				"isActive":    false,
+				"isCompleted": true,
+				"updatedAt":   now,
 			}},
 		)
 		return err
@@ -224,6 +230,7 @@ func (r *RoomRepo) Shutdown(ctx context.Context, code string) error {
 	defer r.mu.Unlock()
 	if room, ok := r.memoryRooms[upper]; ok {
 		room.IsActive = false
+		room.IsCompleted = true
 		room.UpdatedAt = now
 		return nil
 	}

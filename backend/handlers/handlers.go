@@ -11,6 +11,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -26,20 +27,26 @@ import (
 
 // Handler holds all HTTP and WebSocket handler dependencies
 type Handler struct {
-	RoomRepo       *repository.RoomRepo
-	PartRepo       *repository.ParticipantRepo
-	CommentRepo    *repository.CommentaryRepo
-	ReactionRepo   *repository.ReactionRepo
-	Hub            *ws.Hub
-	AuthService    *auth.AuthService
-	MediaAssetRepo *repository.MediaAssetRepo
-	Storage        storage.StorageService
-	upgrader       gorillaWs.Upgrader
+	RoomRepo        *repository.RoomRepo
+	ExpiredRoomRepo *repository.ExpiredRoomRepo
+	PartRepo        *repository.ParticipantRepo
+	CommentRepo     *repository.CommentaryRepo
+	ReactionRepo    *repository.ReactionRepo
+	Hub             *ws.Hub
+	AuthService     *auth.AuthService
+	MediaAssetRepo  *repository.MediaAssetRepo
+	Storage         storage.StorageService
+	upgrader        gorillaWs.Upgrader
 }
 
 // SetStorage configures the object storage service for the handler
 func (h *Handler) SetStorage(s storage.StorageService) {
 	h.Storage = s
+}
+
+// SetExpiredRoomRepo configures the expired room repository
+func (h *Handler) SetExpiredRoomRepo(r *repository.ExpiredRoomRepo) {
+	h.ExpiredRoomRepo = r
 }
 
 // NewHandler creates a new handler with all dependencies
@@ -69,11 +76,17 @@ func NewHandler(
 	}
 }
 
-// Health returns service health status
+// Health returns service health status and active persistence engine
 func (h *Handler) Health(w http.ResponseWriter, r *http.Request) {
-	respondJSON(w, http.StatusOK, map[string]string{
-		"status": "ok",
-		"time":   time.Now().UTC().Format(time.RFC3339),
+	persistence := "in-memory"
+	if h.RoomRepo != nil && h.RoomRepo.IsMongo() {
+		persistence = "mongodb"
+	}
+
+	respondJSON(w, http.StatusOK, map[string]interface{}{
+		"status":      "ok",
+		"persistence": persistence,
+		"time":        time.Now().UTC().Format(time.RFC3339),
 	})
 }
 
@@ -480,7 +493,7 @@ func (h *Handler) GetRoom(w http.ResponseWriter, r *http.Request) {
 }
 
 // GetUserRooms handles GET /api/user/rooms (Protected by auth middleware)
-// Returns all rooms (active and inactive) created by the user and joined by the user for record purposes
+// Returns all rooms (active and concluded) created by the user and joined by the user for record purposes
 func (h *Handler) GetUserRooms(w http.ResponseWriter, r *http.Request) {
 	authUser, ok := auth.GetAuthenticatedUser(r.Context())
 	if !ok {
@@ -491,7 +504,9 @@ func (h *Handler) GetUserRooms(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
 	defer cancel()
 
-	// 1. Fetch active rooms created by user
+	includeInactive := r.URL.Query().Get("includeInactive") == "true"
+
+	// 1. Fetch rooms created by user from active collection
 	createdRooms, err := h.RoomRepo.FindByHost(ctx, authUser.ID)
 	if err != nil {
 		log.Printf("[api] failed to fetch created rooms: %v", err)
@@ -499,8 +514,8 @@ func (h *Handler) GetUserRooms(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	createdRecords := make([]models.UserRoomRecord, 0, len(createdRooms))
-	createdCodes := make(map[string]bool, len(createdRooms))
+	createdRecords := make([]models.UserRoomRecord, 0)
+	createdCodes := make(map[string]bool)
 
 	var createdCodeList []string
 	for _, room := range createdRooms {
@@ -508,7 +523,6 @@ func (h *Handler) GetUserRooms(w http.ResponseWriter, r *http.Request) {
 	}
 	createdParticipantsMap, _ := h.PartRepo.FindParticipantsByRooms(ctx, createdCodeList)
 
-	includeInactive := r.URL.Query().Get("includeInactive") == "true"
 	for _, room := range createdRooms {
 		codeUpper := strings.ToUpper(room.RoomCode)
 		createdCodes[codeUpper] = true
@@ -521,6 +535,13 @@ func (h *Handler) GetUserRooms(w http.ResponseWriter, r *http.Request) {
 		if sourceType == "" {
 			sourceType = "catalog"
 		}
+		concludedAt := time.Time{}
+		concludedReason := ""
+		if !room.IsActive || room.IsCompleted {
+			concludedAt = room.UpdatedAt
+			concludedReason = "screening_concluded"
+		}
+
 		createdRecords = append(createdRecords, models.UserRoomRecord{
 			RoomCode:          room.RoomCode,
 			Name:              room.Name,
@@ -532,14 +553,68 @@ func (h *Handler) GetUserRooms(w http.ResponseWriter, r *http.Request) {
 			MediaURL:          room.MediaURL,
 			DurationSeconds:   room.DurationSeconds,
 			ExpiresAt:         room.ExpiresAt,
+			ConcludedAt:       concludedAt,
 			ParticipantCount:  len(parts),
 			CreatedAt:         room.CreatedAt,
 			IsHost:            true,
 			IsActive:          room.IsActive,
+			IsCompleted:       !room.IsActive || room.IsCompleted,
+			ConcludedReason:   concludedReason,
 		})
 	}
 
-	// 2. Fetch participation records for joined rooms
+	// 2. Fetch rooms created by user from expiredRooms collection
+	if h.ExpiredRoomRepo != nil && includeInactive {
+		expiredHostRooms, err := h.ExpiredRoomRepo.FindByHost(ctx, authUser.ID)
+		if err == nil {
+			for _, exp := range expiredHostRooms {
+				codeUpper := strings.ToUpper(exp.RoomCode)
+				if createdCodes[codeUpper] {
+					// Enrich active repository copy if it was marked concluded
+					for i := range createdRecords {
+						if strings.ToUpper(createdRecords[i].RoomCode) == codeUpper {
+							if createdRecords[i].ConcludedAt.IsZero() {
+								createdRecords[i].ConcludedAt = exp.ConcludedAt
+							}
+							if exp.ConcludedReason != "" {
+								createdRecords[i].ConcludedReason = exp.ConcludedReason
+							}
+							if createdRecords[i].ParticipantCount == 0 && exp.ParticipantCount > 0 {
+								createdRecords[i].ParticipantCount = exp.ParticipantCount
+							}
+						}
+					}
+					continue
+				}
+				createdCodes[codeUpper] = true
+				sourceType := exp.MediaSourceType
+				if sourceType == "" {
+					sourceType = "catalog"
+				}
+				createdRecords = append(createdRecords, models.UserRoomRecord{
+					RoomCode:          exp.RoomCode,
+					Name:              exp.Name,
+					HostDisplayName:   authUser.DisplayName,
+					HostParticipantID: exp.HostParticipantID,
+					MediaSourceType:   sourceType,
+					MediaAssetID:      exp.MediaAssetID,
+					MediaTitle:        exp.MediaTitle,
+					MediaURL:          exp.MediaURL,
+					DurationSeconds:   exp.DurationSeconds,
+					ExpiresAt:         exp.ExpiresAt,
+					ConcludedAt:       exp.ConcludedAt,
+					ParticipantCount:  exp.ParticipantCount,
+					CreatedAt:         exp.CreatedAt,
+					IsHost:            true,
+					IsActive:          false,
+					IsCompleted:       true,
+					ConcludedReason:   exp.ConcludedReason,
+				})
+			}
+		}
+	}
+
+	// 3. Fetch participation records for joined rooms
 	participations, err := h.PartRepo.FindByParticipantID(ctx, authUser.ID)
 	if err != nil {
 		log.Printf("[api] failed to fetch user participations: %v", err)
@@ -547,12 +622,12 @@ func (h *Handler) GetUserRooms(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Filter out rooms that user created or has left, avoiding duplicate codes
+	// Filter out rooms that user created, keeping all joined screenings for history
 	var joinedCodes []string
 	joinedAtMap := make(map[string]time.Time)
 	for _, p := range participations {
 		codeUpper := strings.ToUpper(p.RoomCode)
-		if !createdCodes[codeUpper] && !p.HasLeft {
+		if !createdCodes[codeUpper] {
 			if _, exists := joinedAtMap[codeUpper]; !exists {
 				joinedCodes = append(joinedCodes, codeUpper)
 				joinedAtMap[codeUpper] = p.JoinedAt
@@ -560,7 +635,7 @@ func (h *Handler) GetUserRooms(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// 3. Fetch active room entities for joined codes
+	// 4. Fetch room entities for joined codes from active collection
 	joinedRooms, err := h.RoomRepo.FindByCodes(ctx, joinedCodes)
 	if err != nil {
 		log.Printf("[api] failed to fetch joined room entities: %v", err)
@@ -569,13 +644,15 @@ func (h *Handler) GetUserRooms(w http.ResponseWriter, r *http.Request) {
 	}
 
 	joinedParticipantsMap, _ := h.PartRepo.FindParticipantsByRooms(ctx, joinedCodes)
+	joinedRecords := make([]models.UserRoomRecord, 0)
+	handledJoinedCodes := make(map[string]bool)
 
-	joinedRecords := make([]models.UserRoomRecord, 0, len(joinedRooms))
 	for _, room := range joinedRooms {
+		codeUpper := strings.ToUpper(room.RoomCode)
 		if !includeInactive && !room.IsActive {
 			continue
 		}
-		codeUpper := strings.ToUpper(room.RoomCode)
+		handledJoinedCodes[codeUpper] = true
 		parts := joinedParticipantsMap[codeUpper]
 		hostName := "Host"
 		for _, part := range parts {
@@ -590,6 +667,13 @@ func (h *Handler) GetUserRooms(w http.ResponseWriter, r *http.Request) {
 		if sourceType == "" {
 			sourceType = "catalog"
 		}
+		concludedAt := time.Time{}
+		concludedReason := ""
+		if !room.IsActive || room.IsCompleted {
+			concludedAt = room.UpdatedAt
+			concludedReason = "screening_concluded"
+		}
+
 		joinedRecords = append(joinedRecords, models.UserRoomRecord{
 			RoomCode:          room.RoomCode,
 			Name:              room.Name,
@@ -601,13 +685,82 @@ func (h *Handler) GetUserRooms(w http.ResponseWriter, r *http.Request) {
 			MediaURL:          room.MediaURL,
 			DurationSeconds:   room.DurationSeconds,
 			ExpiresAt:         room.ExpiresAt,
+			ConcludedAt:       concludedAt,
 			ParticipantCount:  len(parts),
 			CreatedAt:         room.CreatedAt,
 			JoinedAt:          joinedAtMap[codeUpper],
 			IsHost:            false,
 			IsActive:          room.IsActive,
+			IsCompleted:       !room.IsActive || room.IsCompleted,
+			ConcludedReason:   concludedReason,
 		})
 	}
+
+	// 5. Fetch archived/expired entities for joined codes from expiredRooms collection
+	if h.ExpiredRoomRepo != nil && includeInactive {
+		expiredJoined, err := h.ExpiredRoomRepo.FindByCodes(ctx, joinedCodes)
+		if err == nil {
+			for _, exp := range expiredJoined {
+				codeUpper := strings.ToUpper(exp.RoomCode)
+				if handledJoinedCodes[codeUpper] {
+					for i := range joinedRecords {
+						if strings.ToUpper(joinedRecords[i].RoomCode) == codeUpper {
+							if joinedRecords[i].ConcludedAt.IsZero() {
+								joinedRecords[i].ConcludedAt = exp.ConcludedAt
+							}
+							if exp.ConcludedReason != "" {
+								joinedRecords[i].ConcludedReason = exp.ConcludedReason
+							}
+							if joinedRecords[i].HostDisplayName == "Host" && exp.HostDisplayName != "" {
+								joinedRecords[i].HostDisplayName = exp.HostDisplayName
+							}
+						}
+					}
+					continue
+				}
+				handledJoinedCodes[codeUpper] = true
+				sourceType := exp.MediaSourceType
+				if sourceType == "" {
+					sourceType = "catalog"
+				}
+				joinedRecords = append(joinedRecords, models.UserRoomRecord{
+					RoomCode:          exp.RoomCode,
+					Name:              exp.Name,
+					HostDisplayName:   exp.HostDisplayName,
+					HostParticipantID: exp.HostParticipantID,
+					MediaSourceType:   sourceType,
+					MediaAssetID:      exp.MediaAssetID,
+					MediaTitle:        exp.MediaTitle,
+					MediaURL:          exp.MediaURL,
+					DurationSeconds:   exp.DurationSeconds,
+					ExpiresAt:         exp.ExpiresAt,
+					ConcludedAt:       exp.ConcludedAt,
+					ParticipantCount:  exp.ParticipantCount,
+					CreatedAt:         exp.CreatedAt,
+					JoinedAt:          joinedAtMap[codeUpper],
+					IsHost:            false,
+					IsActive:          false,
+					IsCompleted:       true,
+					ConcludedReason:   exp.ConcludedReason,
+				})
+			}
+		}
+	}
+
+	// Sort rooms: Active rooms first (newest createdAt), then concluded rooms (newest concludedAt/createdAt)
+	sortRecords := func(recs []models.UserRoomRecord) {
+		sort.Slice(recs, func(i, j int) bool {
+			if recs[i].IsActive != recs[j].IsActive {
+				return recs[i].IsActive
+			}
+			if !recs[i].ConcludedAt.IsZero() && !recs[j].ConcludedAt.IsZero() {
+				return recs[i].ConcludedAt.After(recs[j].ConcludedAt)
+			}
+			return recs[i].CreatedAt.After(recs[j].CreatedAt)
+		})
+	}
+	sortRecords(createdRecords)
+	sortRecords(joinedRecords)
 
 	respondJSON(w, http.StatusOK, models.UserRoomsResponse{
 		CreatedRooms: createdRecords,
@@ -615,8 +768,70 @@ func (h *Handler) GetUserRooms(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// archiveRoomSnapshot records an immutable snapshot of a concluding screening room
+// into the expiredRooms collection for auditing, history, and user dashboard persistence
+func (h *Handler) archiveRoomSnapshot(ctx context.Context, room *models.Room, reason string) {
+	if h.ExpiredRoomRepo == nil || room == nil {
+		return
+	}
+	now := time.Now().UTC()
+
+	var attendees []string
+	hostDisplayName := ""
+	if h.PartRepo != nil {
+		parts, err := h.PartRepo.FindByRoom(ctx, room.RoomCode)
+		if err == nil {
+			for _, p := range parts {
+				attendees = append(attendees, p.DisplayName)
+				if p.ParticipantID == room.HostParticipantID {
+					hostDisplayName = p.DisplayName
+				}
+			}
+		}
+	}
+	if hostDisplayName == "" {
+		hostDisplayName = "Host"
+	}
+
+	mediaTitle := models.FormatMediaTitle(room.MediaTitle, room.MediaURL)
+	sourceType := room.MediaSourceType
+	if sourceType == "" {
+		sourceType = "catalog"
+	}
+
+	participantCount := len(attendees)
+	if participantCount == 0 {
+		participantCount = 1
+	}
+
+	archived := &models.ExpiredRoom{
+		RoomCode:                strings.ToUpper(strings.TrimSpace(room.RoomCode)),
+		Name:                    room.Name,
+		HostParticipantID:       room.HostParticipantID,
+		HostDisplayName:         hostDisplayName,
+		MediaSourceType:         sourceType,
+		MediaAssetID:            room.MediaAssetID,
+		MediaTitle:              mediaTitle,
+		MediaURL:                room.MediaURL,
+		DurationSeconds:         room.DurationSeconds,
+		PlaybackPositionSeconds: room.PlaybackPositionSeconds,
+		ParticipantCount:        participantCount,
+		Attendees:               attendees,
+		ConcludedReason:         reason,
+		CreatedAt:               room.CreatedAt,
+		ExpiresAt:               room.ExpiresAt,
+		ConcludedAt:             now,
+	}
+
+	if err := h.ExpiredRoomRepo.Archive(ctx, archived); err != nil {
+		log.Printf("[archive] failed to archive expired room %s: %v", room.RoomCode, err)
+	} else {
+		log.Printf("[archive] successfully archived room %s (reason: %s, attendees: %d)", room.RoomCode, reason, len(attendees))
+	}
+}
+
 // ShutdownRoom handles DELETE /api/rooms/{roomCode} (Protected by auth middleware)
-// Only the host can shut down the room, which terminates connections and removes it from active records
+// Only the host can shut down the room, which archives a snapshot and marks it inactive
 func (h *Handler) ShutdownRoom(w http.ResponseWriter, r *http.Request) {
 	authUser, ok := auth.GetAuthenticatedUser(r.Context())
 	if !ok {
@@ -640,6 +855,9 @@ func (h *Handler) ShutdownRoom(w http.ResponseWriter, r *http.Request) {
 		respondError(w, http.StatusForbidden, "Only the host can shut down this room")
 		return
 	}
+
+	// Archive an immutable snapshot into expiredRooms before shutdown
+	h.archiveRoomSnapshot(ctx, room, "host_shutdown")
 
 	if err := h.RoomRepo.Shutdown(ctx, roomCode); err != nil {
 		log.Printf("[api] failed to shutdown room %s: %v", roomCode, err)

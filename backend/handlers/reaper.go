@@ -51,6 +51,9 @@ func (h *Handler) ReapExpiredRooms(ctx context.Context) int {
 
 	reaped := 0
 	for _, room := range expiredRooms {
+		// Archive snapshot to expiredRooms collection before shutting down
+		h.archiveRoomSnapshot(ctx, &room, "timer_expired")
+
 		if err := h.RoomRepo.Shutdown(ctx, room.RoomCode); err != nil {
 			log.Printf("[reaper] failed to shut down expired room %s: %v", room.RoomCode, err)
 			continue

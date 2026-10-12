@@ -142,9 +142,9 @@ const API = (() => {
       return request('POST', '/api/rooms/join', { roomCode, displayName });
     },
 
-    /** Get user room records (created and joined rooms for continued access) */
+    /** Get user room records (active and concluded rooms for history and records) */
     getUserRooms() {
-      return request('GET', '/api/user/rooms');
+      return request('GET', '/api/user/rooms?includeInactive=true');
     },
 
     /** Host shuts down / deletes a room */

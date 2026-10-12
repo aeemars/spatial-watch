@@ -2040,14 +2040,17 @@ const App = (() => {
           </div>
         </div>
         <div class="record-card__badge-wrap">
-          ${isConcluded ? '<span class="chip chip--xs" style="color:var(--text-amber);border-color:rgba(217,119,6,0.3)">EXPIRED</span>' : ''}
+          ${isConcluded 
+            ? '<span class="chip chip--xs" style="color:var(--text-amber);border-color:rgba(217,119,6,0.3)">CONCLUDED</span>' 
+            : '<span class="chip chip--xs chip--live" style="color:#10b981;border-color:rgba(16,185,129,0.3);font-weight:600"><span style="display:inline-block;width:6px;height:6px;background:#10b981;border-radius:50%;margin-right:4px;box-shadow:0 0 6px rgba(16,185,129,0.6)"></span>LIVE NOW</span>'}
           ${isCardHost ? '<span class="badge badge--host">Host</span>' : '<span class="chip chip--xs chip--presence">Guest</span>'}
         </div>
       </div>
       <div class="record-card__body">
         <div class="record-card__media" title="${escapeHtml(mediaTitle)}">
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="10"/><polygon points="10 8 16 12 10 16 10 8"/></svg>
-          <span>${escapeHtml(mediaTitle)}</span>
+          <span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${escapeHtml(mediaTitle)}</span>
+          ${room.participantCount > 0 ? `<span class="chip chip--xs" style="margin-left:6px;opacity:0.8;font-size:11px">${room.participantCount} attendee${room.participantCount === 1 ? '' : 's'}</span>` : ''}
         </div>
         <div class="record-card__actions">
           ${isConcluded ? (

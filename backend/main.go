@@ -73,6 +73,7 @@ func main() {
 
 	// Initialize repositories (handles both MongoDB and in-memory gracefully)
 	roomRepo := repository.NewRoomRepo(db)
+	expiredRoomRepo := repository.NewExpiredRoomRepo(db)
 	partRepo := repository.NewParticipantRepo(db)
 	commentRepo := repository.NewCommentaryRepo(db)
 	reactionRepo := repository.NewReactionRepo(db)
@@ -91,6 +92,7 @@ func main() {
 
 	// Initialize handlers
 	handler := handlers.NewHandler(roomRepo, partRepo, commentRepo, reactionRepo, hub, authService, mediaAssetRepo, cfg.CORSAllowedOrigins)
+	handler.SetExpiredRoomRepo(expiredRoomRepo)
 
 	// Initialize Cloudflare R2 object storage client
 	r2Storage, err := storage.NewR2Storage(cfg)

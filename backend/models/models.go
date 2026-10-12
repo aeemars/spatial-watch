@@ -94,6 +94,27 @@ type Room struct {
 	UpdatedAt               time.Time     `bson:"updatedAt" json:"updatedAt"`
 }
 
+// ExpiredRoom represents an archived, concluded screening room
+type ExpiredRoom struct {
+	ID                      bson.ObjectID `bson:"_id,omitempty" json:"id"`
+	RoomCode                string        `bson:"roomCode" json:"roomCode"`
+	Name                    string        `bson:"name" json:"name"`
+	HostParticipantID       string        `bson:"hostParticipantId" json:"hostParticipantId"`
+	HostDisplayName         string        `bson:"hostDisplayName,omitempty" json:"hostDisplayName,omitempty"`
+	MediaSourceType         string        `bson:"mediaSourceType,omitempty" json:"mediaSourceType,omitempty"`
+	MediaAssetID            string        `bson:"mediaAssetId,omitempty" json:"mediaAssetId,omitempty"`
+	MediaTitle              string        `bson:"mediaTitle" json:"mediaTitle"`
+	MediaURL                string        `bson:"mediaUrl" json:"mediaUrl"`
+	DurationSeconds         float64       `bson:"durationSeconds,omitempty" json:"durationSeconds,omitempty"`
+	PlaybackPositionSeconds float64       `bson:"playbackPositionSeconds,omitempty" json:"playbackPositionSeconds,omitempty"`
+	ParticipantCount        int           `bson:"participantCount" json:"participantCount"`
+	Attendees               []string      `bson:"attendees,omitempty" json:"attendees,omitempty"`
+	ConcludedReason         string        `bson:"concludedReason" json:"concludedReason"` // "timer_expired" | "host_shutdown" | "screening_concluded"
+	CreatedAt               time.Time     `bson:"createdAt" json:"createdAt"`
+	ExpiresAt               time.Time     `bson:"expiresAt,omitempty" json:"expiresAt,omitempty"`
+	ConcludedAt             time.Time     `bson:"concludedAt" json:"concludedAt"`
+}
+
 // Participant represents a user in a room
 type Participant struct {
 	ID            bson.ObjectID `bson:"_id,omitempty" json:"id"`
@@ -175,11 +196,14 @@ type UserRoomRecord struct {
 	MediaURL          string    `json:"mediaUrl"`
 	DurationSeconds   float64   `json:"durationSeconds,omitempty"`
 	ExpiresAt         time.Time `json:"expiresAt,omitempty"`
+	ConcludedAt       time.Time `json:"concludedAt,omitempty"`
 	ParticipantCount  int       `json:"participantCount"`
 	CreatedAt         time.Time `json:"createdAt"`
 	JoinedAt          time.Time `json:"joinedAt,omitempty"`
 	IsHost            bool      `json:"isHost"`
 	IsActive          bool      `json:"isActive"`
+	IsCompleted       bool      `json:"isCompleted"`
+	ConcludedReason   string    `json:"concludedReason,omitempty"`
 }
 
 // UserRoomsResponse is returned by GET /api/user/rooms
