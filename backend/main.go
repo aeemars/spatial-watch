@@ -30,6 +30,9 @@ import (
 
 func main() {
 	cfg := config.Load()
+	if cfg.DatabaseName == "" {
+		cfg.DatabaseName = "spatialwatch"
+	}
 
 	log.Println("Spatial Watch — starting up")
 	log.Printf("  Port: %d", cfg.Port)

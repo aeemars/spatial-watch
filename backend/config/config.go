@@ -118,10 +118,18 @@ func Load() *Config {
 		mongoURI = "mongodb://localhost:27017"
 	}
 
+	dbName := getEnv("DATABASE_NAME", "")
+	if dbName == "" {
+		dbName = ExtractDatabaseFromURI(mongoURI)
+	}
+	if dbName == "" {
+		dbName = "spatialwatch"
+	}
+
 	return &Config{
 		Port:                port,
 		MongoURI:            mongoURI,
-		DatabaseName:        getEnv("DATABASE_NAME", "spatialwatch"),
+		DatabaseName:        dbName,
 		PublicBaseURL:       getEnv("PUBLIC_BASE_URL", "http://localhost:8080"),
 		CookieSecure:        cookieSecure,
 		CookieDomain:        getEnv("COOKIE_DOMAIN", ""),
@@ -134,6 +142,31 @@ func Load() *Config {
 		R2BucketName:        getEnv("R2_BUCKET_NAME", "spatialwatch-media"),
 		R2PublicURL:         getEnv("R2_PUBLIC_URL", ""),
 	}
+}
+
+// ExtractDatabaseFromURI extracts the database name from a MongoDB connection string path if present
+func ExtractDatabaseFromURI(raw string) string {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return ""
+	}
+	// Strip query parameters
+	if qIdx := strings.Index(raw, "?"); qIdx != -1 {
+		raw = raw[:qIdx]
+	}
+	// Strip scheme
+	if sIdx := strings.Index(raw, "://"); sIdx != -1 {
+		raw = raw[sIdx+3:]
+	}
+	// Database name is the path component after host
+	if pIdx := strings.Index(raw, "/"); pIdx != -1 {
+		db := strings.TrimSpace(raw[pIdx+1:])
+		db = strings.Trim(db, "/")
+		if db != "" && !strings.ContainsAny(db, "?/\\ ") {
+			return db
+		}
+	}
+	return ""
 }
 
 // CleanMongoURI strips accidental quotes, whitespace, and variable assignment prefixes from MongoDB connection strings

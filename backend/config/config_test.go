@@ -73,3 +73,38 @@ func TestMaskMongoURI(t *testing.T) {
 		t.Errorf("Unexpected masked URI: %s", masked)
 	}
 }
+
+func TestExtractDatabaseFromURI(t *testing.T) {
+	tests := []struct {
+		uri      string
+		expected string
+	}{
+		{
+			uri:      "mongodb+srv://user:pass@cluster.mongodb.net/spatialwatch?retryWrites=true&w=majority",
+			expected: "spatialwatch",
+		},
+		{
+			uri:      "mongodb://localhost:27017/customdb",
+			expected: "customdb",
+		},
+		{
+			uri:      "mongodb+srv://user:pass@cluster.mongodb.net/?retryWrites=true",
+			expected: "",
+		},
+		{
+			uri:      "mongodb://localhost:27017/",
+			expected: "",
+		},
+		{
+			uri:      "mongodb://localhost:27017",
+			expected: "",
+		},
+	}
+
+	for _, tt := range tests {
+		got := ExtractDatabaseFromURI(tt.uri)
+		if got != tt.expected {
+			t.Errorf("ExtractDatabaseFromURI(%q) = %q, want %q", tt.uri, got, tt.expected)
+		}
+	}
+}
