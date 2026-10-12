@@ -20,5 +20,5 @@
        window.ENV_API_URL = 'https://api.spatialwatch.com';
    ═══════════════════════════════════════════════════════════ */
 
-window.ENV_API_URL = '';
-window.ENV_WS_URL = window.ENV_WS_URL || '';
+window.ENV_API_URL = 'https://spatial-watch.pxxlspace.cv';
+window.ENV_WS_URL = 'wss://spatial-watch.pxxlspace.cv';
