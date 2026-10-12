@@ -4,9 +4,11 @@
 # ═══════════════════════════════════════════════════════════
 
 # ─── Stage 1: Builder ─────────────────────────────────────
-FROM golang:1.23-alpine AS builder
+FROM golang:1.25-alpine AS builder
 
 WORKDIR /build
+
+ENV GOTOOLCHAIN=auto
 
 # Install CA certificates for external HTTPS requests (e.g., MongoDB Atlas TLS)
 RUN apk add --no-cache ca-certificates git
