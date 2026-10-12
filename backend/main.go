@@ -174,9 +174,26 @@ func main() {
 	// Start background room reaper to auto-shutdown rooms when their duration expires
 	stopReaper := handler.StartRoomReaper(15 * time.Second)
 
-	// Create server
+	// Bind primary server explicitly to 0.0.0.0 (IPv4) so container health checkers
+	// inspecting /proc/net/tcp find an active IPv4 TCP listener
+	primaryAddr := fmt.Sprintf("0.0.0.0:%d", cfg.Port)
 	srv := &http.Server{
-		Addr:         fmt.Sprintf(":%d", cfg.Port),
+		Addr:         primaryAddr,
+		Handler:      r,
+		ReadTimeout:  15 * time.Minute,
+		WriteTimeout: 15 * time.Minute,
+		IdleTimeout:  60 * time.Second,
+	}
+
+	// Secondary dual-port listener: if primary is 3000, also bind 8080; if 8080, also bind 3000
+	// Guarantees container healthchecks on either standard PaaS port succeed unconditionally
+	secondaryPort := 8080
+	if cfg.Port == 8080 {
+		secondaryPort = 3000
+	}
+	secondaryAddr := fmt.Sprintf("0.0.0.0:%d", secondaryPort)
+	secondarySrv := &http.Server{
+		Addr:         secondaryAddr,
 		Handler:      r,
 		ReadTimeout:  15 * time.Minute,
 		WriteTimeout: 15 * time.Minute,
@@ -195,9 +212,17 @@ func main() {
 		shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer shutdownCancel()
 		srv.Shutdown(shutdownCtx)
+		secondarySrv.Shutdown(shutdownCtx)
 	}()
 
-	log.Printf("Spatial Watch listening on :%d", cfg.Port)
+	// Start secondary listener in background
+	go func() {
+		if err := secondarySrv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+			log.Printf("[dual-port] secondary listener (%s) info: %v", secondaryAddr, err)
+		}
+	}()
+
+	log.Printf("Spatial Watch listening on %s (dual-port standby on %s)", primaryAddr, secondaryAddr)
 	if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 		log.Fatalf("Server error: %v", err)
 	}

@@ -37,8 +37,9 @@ COPY --from=builder /build/spatialwatch-server ./spatialwatch-server
 COPY frontend/ ./frontend/
 
 # Set production defaults (can be overridden by environment variables)
-ENV PORT=8080
+ENV PORT=3000
 
+EXPOSE 3000
 EXPOSE 8080
 
 USER spatialwatch:spatialwatch

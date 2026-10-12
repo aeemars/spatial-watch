@@ -42,9 +42,23 @@ func Load() *Config {
 		}
 	}
 
-	port, err := strconv.Atoi(getEnv("PORT", "8080"))
-	if err != nil {
-		port = 8080
+	rawPort := getEnv("PORT", "")
+	if rawPort == "" {
+		rawPort = getEnv("APP_PORT", "")
+	}
+	if rawPort == "" {
+		rawPort = getEnv("APPLICATION_PORT", "")
+	}
+	if rawPort == "" {
+		rawPort = getEnv("HTTP_PORT", "")
+	}
+	if rawPort == "" {
+		rawPort = "3000"
+	}
+
+	port, err := strconv.Atoi(rawPort)
+	if err != nil || port <= 0 {
+		port = 3000
 	}
 
 	sessionDuration, err := strconv.Atoi(getEnv("SESSION_DURATION_DAYS", "30"))
