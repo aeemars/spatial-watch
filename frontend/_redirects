@@ -1,8 +1,1 @@
-# ═══════════════════════════════════════════════════════════
-# Spatial Watch — Cloudflare Pages Proxy Redirects
-# ═══════════════════════════════════════════════════════════
-# Cloudflare Pages 200 rewrites proxying API & WebSocket to PXXL Go Backend:
-
-/api/*  https://spatial-watch.pxxlspace.cv/api/:splat  200
-/ws     https://spatial-watch.pxxlspace.cv/ws          200
-/ws/*   https://spatial-watch.pxxlspace.cv/ws/:splat   200
+# Cloudflare Static Asset Redirects
