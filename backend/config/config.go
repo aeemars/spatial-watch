@@ -107,9 +107,20 @@ func Load() *Config {
 		}
 	}
 
+	mongoURI := CleanMongoURI(getEnv("MONGODB_URI", ""))
+	if mongoURI == "" {
+		mongoURI = CleanMongoURI(getEnv("MONGO_URI", ""))
+	}
+	if mongoURI == "" {
+		mongoURI = CleanMongoURI(getEnv("DATABASE_URL", ""))
+	}
+	if mongoURI == "" {
+		mongoURI = "mongodb://localhost:27017"
+	}
+
 	return &Config{
 		Port:                port,
-		MongoURI:            getEnv("MONGODB_URI", "mongodb://localhost:27017"),
+		MongoURI:            mongoURI,
 		DatabaseName:        getEnv("DATABASE_NAME", "spatialwatch"),
 		PublicBaseURL:       getEnv("PUBLIC_BASE_URL", "http://localhost:8080"),
 		CookieSecure:        cookieSecure,
@@ -125,9 +136,67 @@ func Load() *Config {
 	}
 }
 
+// CleanMongoURI strips accidental quotes, whitespace, and variable assignment prefixes from MongoDB connection strings
+func CleanMongoURI(raw string) string {
+	raw = strings.TrimSpace(raw)
+	raw = strings.Trim(raw, `"'`+"`")
+	raw = strings.TrimSpace(raw)
+
+	// If user accidentally pasted the whole variable line into their dashboard e.g. "MONGODB_URI=mongodb+srv://..."
+	if idx := strings.Index(raw, "="); idx != -1 {
+		prefix := strings.ToUpper(strings.TrimSpace(raw[:idx]))
+		if strings.Contains(prefix, "MONGO") || strings.Contains(prefix, "URI") || strings.Contains(prefix, "URL") {
+			raw = strings.TrimSpace(raw[idx+1:])
+			raw = strings.Trim(raw, `"'`+"`")
+			raw = strings.TrimSpace(raw)
+		}
+	}
+
+	// Fix common missing colon typo e.g. "mongodb+srv//..." or "mongodb//"
+	if strings.HasPrefix(raw, "mongodb+srv//") {
+		raw = "mongodb+srv://" + raw[13:]
+	} else if strings.HasPrefix(raw, "mongodb//") {
+		raw = "mongodb://" + raw[9:]
+	}
+
+	return raw
+}
+
+// MaskMongoURI masks user credentials in a MongoDB URI for safe logging without leaking passwords
+func MaskMongoURI(raw string) string {
+	if raw == "" {
+		return "(empty)"
+	}
+	schemeIdx := strings.Index(raw, "://")
+	if schemeIdx == -1 {
+		if len(raw) > 12 {
+			return raw[:6] + "..." + raw[len(raw)-6:]
+		}
+		return raw
+	}
+	scheme := raw[:schemeIdx+3]
+	rest := raw[schemeIdx+3:]
+	atIdx := strings.LastIndex(rest, "@")
+	if atIdx == -1 {
+		return scheme + rest
+	}
+	userInfo := rest[:atIdx]
+	hostAndRest := rest[atIdx:]
+	colonIdx := strings.Index(userInfo, ":")
+	if colonIdx == -1 {
+		return scheme + userInfo + hostAndRest
+	}
+	return scheme + userInfo[:colonIdx+1] + "******" + hostAndRest
+}
+
 func getEnv(key, fallback string) string {
 	if val, ok := os.LookupEnv(key); ok {
-		return val
+		cleaned := strings.TrimSpace(val)
+		cleaned = strings.Trim(cleaned, `"'`+"`")
+		cleaned = strings.TrimSpace(cleaned)
+		if cleaned != "" {
+			return cleaned
+		}
 	}
 	return fallback
 }

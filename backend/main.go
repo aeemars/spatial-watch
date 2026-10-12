@@ -38,7 +38,8 @@ func main() {
 	// Attempt MongoDB connection with v2 driver (10s ping timeout, fallback to in-memory store)
 	var db *mongo.Database
 	if cfg.MongoURI != "" && !strings.Contains(cfg.MongoURI, "<user>") {
-		log.Println("  Connecting to MongoDB...")
+		masked := config.MaskMongoURI(cfg.MongoURI)
+		log.Printf("  Connecting to MongoDB (%s)...", masked)
 		clientOpts := options.Client().
 			ApplyURI(cfg.MongoURI).
 			SetServerSelectionTimeout(10 * time.Second)
@@ -56,13 +57,15 @@ func main() {
 				}()
 			} else {
 				log.Printf("MongoDB ping failed: %v", err)
-				log.Println("  -> Tip: If using MongoDB Atlas, check your IP whitelist (Network Access -> Add IP Address) and credentials.")
+				log.Println("  -> Tip: If using MongoDB Atlas, check your IP whitelist (Network Access -> Add IP Address 0.0.0.0/0) and credentials.")
 				log.Println("  -> Falling back to in-memory store")
 			}
 			cancel()
 		} else {
-			log.Printf("MongoDB connect error: %v — falling back to in-memory store", err)
+			log.Printf("MongoDB connect error: %v (target was: %s) — falling back to in-memory store", err, masked)
 		}
+	} else {
+		log.Println("  MongoDB URI is missing or contains placeholder '<user>' — falling back to in-memory store")
 	}
 
 	if db == nil {
