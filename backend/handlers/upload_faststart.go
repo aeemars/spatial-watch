@@ -22,9 +22,9 @@ func (h *Handler) UploadFastStart(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Limit to 500MB
+	// Limit to 500MB total body, but only buffer up to 32MB in RAM to avoid container OOM
 	r.Body = http.MaxBytesReader(w, r.Body, 500*1024*1024)
-	if err := r.ParseMultipartForm(500 * 1024 * 1024); err != nil {
+	if err := r.ParseMultipartForm(32 * 1024 * 1024); err != nil {
 		respondError(w, http.StatusBadRequest, "File too large or invalid multipart form")
 		return
 	}
@@ -75,7 +75,7 @@ func (h *Handler) UploadFastStart(w http.ResponseWriter, r *http.Request) {
 	out.Close()
 	defer os.Remove(rawPath)
 
-	// 2. Run ffmpeg faststart with timeout
+	// 2. Run ffmpeg faststart with a conservative timeout so reverse proxy never times out
 	fastPath := filepath.Join("/tmp", randomID+"_fast"+ext)
 	ffmpegBin := "ffmpeg"
 	if _, err := exec.LookPath("ffmpeg"); err != nil {
@@ -85,29 +85,21 @@ func (h *Handler) UploadFastStart(w http.ResponseWriter, r *http.Request) {
 			ffmpegBin = "./ffmpeg"
 		}
 	}
-	ffmpegCtx, ffmpegCancel := context.WithTimeout(r.Context(), 3*time.Minute)
+	ffmpegCtx, ffmpegCancel := context.WithTimeout(r.Context(), 15*time.Second)
 	cmd := exec.CommandContext(ffmpegCtx, ffmpegBin, "-i", rawPath, "-c", "copy", "-movflags", "faststart", fastPath)
 	if err := cmd.Run(); err != nil {
 		ffmpegCancel()
-		log.Printf("[upload] ffmpeg faststart error: %v", err)
-		// Fallback to uploading the raw file if ffmpeg fails
+		log.Printf("[upload] ffmpeg faststart skipped/error: %v (falling back to raw stream)", err)
 		fastPath = rawPath
 	} else {
 		ffmpegCancel()
 		defer os.Remove(fastPath)
 	}
 
-	// 3. Upload to R2 using a presigned URL
+	// 3. Upload directly via storage service (handles live R2 via S3 SDK or dev disk)
 	fileInfo, err := os.Stat(fastPath)
 	if err != nil {
 		respondError(w, http.StatusInternalServerError, "Failed to read optimized file")
-		return
-	}
-
-	res, err := h.Storage.PresignPut(r.Context(), key, cType, fileInfo.Size(), 15*time.Minute)
-	if err != nil {
-		log.Printf("[upload] failed to generate presigned upload URL: %v", err)
-		respondError(w, http.StatusInternalServerError, "Failed to generate presigned upload URL")
 		return
 	}
 
@@ -118,26 +110,15 @@ func (h *Handler) UploadFastStart(w http.ResponseWriter, r *http.Request) {
 	}
 	defer fastFile.Close()
 
-	reqPut, err := http.NewRequestWithContext(r.Context(), "PUT", res.UploadURL, fastFile)
-	if err != nil {
-		respondError(w, http.StatusInternalServerError, "Failed to create upload request")
+	if h.Storage == nil {
+		respondError(w, http.StatusInternalServerError, "Storage service is not configured")
 		return
 	}
-	reqPut.Header.Set("Content-Type", cType)
-	reqPut.ContentLength = fileInfo.Size()
 
-	client := &http.Client{Timeout: 10 * time.Minute}
-	respPut, err := client.Do(reqPut)
+	res, err := h.Storage.PutObject(r.Context(), key, cType, fastFile, fileInfo.Size())
 	if err != nil {
-		log.Printf("[upload] upload to R2 failed: err=%v", err)
-		respondError(w, http.StatusInternalServerError, "Failed to upload to R2")
-		return
-	}
-	defer respPut.Body.Close()
-	
-	if respPut.StatusCode != http.StatusOK {
-		log.Printf("[upload] upload to R2 failed: status=%d", respPut.StatusCode)
-		respondError(w, http.StatusInternalServerError, "Failed to upload to R2")
+		log.Printf("[upload] upload failed: %v", err)
+		respondError(w, http.StatusInternalServerError, "Failed to store uploaded media")
 		return
 	}
 

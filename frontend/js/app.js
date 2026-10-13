@@ -205,6 +205,24 @@ const App = (() => {
     document.getElementById('btn-cinema-dc').addEventListener('click', handleToggleDirectorCut);
     document.getElementById('btn-cinema-exit').addEventListener('click', leaveRoom);
     document.getElementById('btn-enter-vr').addEventListener('click', () => XR.enterVR());
+    const btnCinemaLobby = document.getElementById('btn-cinema-lobby');
+    if (btnCinemaLobby) {
+      btnCinemaLobby.addEventListener('click', () => enterLobby());
+    }
+    const cinemaRoomCodeEl = document.getElementById('cinema-room-code');
+    if (cinemaRoomCodeEl) {
+      cinemaRoomCodeEl.style.cursor = 'pointer';
+      cinemaRoomCodeEl.title = 'Click to copy room code';
+      cinemaRoomCodeEl.addEventListener('click', () => {
+        if (roomCode) {
+          navigator.clipboard.writeText(roomCode).then(() => {
+            showToast(`Room code ${roomCode} copied to clipboard!`, 'info');
+          }).catch(() => {
+            showToast(roomCode, 'info');
+          });
+        }
+      });
+    }
     const btnClosingExit = document.getElementById('btn-cinema-closing-exit');
     if (btnClosingExit) {
       btnClosingExit.addEventListener('click', () => finalizeScreeningShutdown());
@@ -704,8 +722,21 @@ const App = (() => {
       const objUrl = URL.createObjectURL(file);
       video.src = objUrl;
 
+      let isCleaned = false;
       const cleanup = () => {
-        URL.revokeObjectURL(objUrl);
+        if (isCleaned) return;
+        isCleaned = true;
+        video.onloadedmetadata = null;
+        video.onerror = null;
+        try {
+          video.removeAttribute('src');
+          video.load();
+        } catch (_) {}
+        setTimeout(() => {
+          try {
+            URL.revokeObjectURL(objUrl);
+          } catch (_) {}
+        }, 2000);
       };
 
       video.onloadedmetadata = () => {
@@ -974,7 +1005,7 @@ const App = (() => {
         return;
       }
 
-      // Step 1: Request presigned upload URL from backend or do faststart fallback
+      // Step 1: Direct Zero-Egress upload to Cloudflare R2
       const progressWrap = document.getElementById('upload-progress-wrap');
       const progressFill = document.getElementById('upload-progress-fill');
       const progressText = document.getElementById('upload-progress-percent');
@@ -983,87 +1014,66 @@ const App = (() => {
       if (progressWrap) progressWrap.hidden = false;
       if (progressFill) progressFill.style.width = '0%';
       if (progressText) progressText.textContent = '0%';
-      if (progressLabel) progressLabel.textContent = 'Analyzing video file…';
-
-      // Quick check if file is already streaming-optimized (moov before mdat)
-      const isFastStart = async (file) => {
-        return new Promise((resolve) => {
-          const chunk = file.slice(0, 5 * 1024 * 1024); // Check first 5MB
-          const reader = new FileReader();
-          reader.onload = (e) => {
-            try {
-              const view = new DataView(e.target.result);
-              let offset = 0, moovFound = false, mdatFound = false;
-              while (offset < view.byteLength - 8) {
-                const size = view.getUint32(offset);
-                if (size < 8) break;
-                const type = String.fromCharCode(view.getUint8(offset+4), view.getUint8(offset+5), view.getUint8(offset+6), view.getUint8(offset+7));
-                if (type === 'moov') moovFound = true;
-                if (type === 'mdat') mdatFound = true;
-                if (moovFound && !mdatFound) return resolve(true);
-                if (mdatFound && !moovFound) return resolve(false);
-                offset += size;
-              }
-              resolve(false);
-            } catch (err) { resolve(false); }
-          };
-          reader.onerror = () => resolve(false);
-          reader.readAsArrayBuffer(chunk);
-        });
-      };
+      if (progressLabel) progressLabel.textContent = 'Preparing upload…';
 
       let presign;
       try {
         await ensureSession();
-        const optimized = await isFastStart(uploadedFile);
+        if (progressLabel) progressLabel.textContent = 'Uploading directly to Cloudflare R2…';
 
-        if (optimized) {
-          if (progressLabel) progressLabel.textContent = 'Zero-Egress Direct Upload to R2…';
-          presign = await API.presignUpload({
-            fileName: uploadedFile.name,
-            fileSize: uploadedFile.size,
-            contentType: uploadedFile.type || 'video/mp4',
-          });
+        // 1. Request presigned upload URL from backend
+        presign = await API.presignUpload({
+          fileName: uploadedFile.name,
+          fileSize: uploadedFile.size,
+          contentType: uploadedFile.type || 'video/mp4',
+        });
 
-          await new Promise((resolve, reject) => {
-            const xhr = new XMLHttpRequest();
-            xhr.open('PUT', presign.uploadUrl, true);
-            xhr.setRequestHeader('Content-Type', uploadedFile.type || 'video/mp4');
+        // 2. Direct browser-to-R2 PUT upload with progress
+        await new Promise((resolve, reject) => {
+          const xhr = new XMLHttpRequest();
+          xhr.open('PUT', presign.uploadUrl, true);
+          xhr.setRequestHeader('Content-Type', uploadedFile.type || 'video/mp4');
 
-            xhr.upload.onprogress = (e) => {
-              if (e.lengthComputable) {
-                const percent = Math.min(100, Math.round((e.loaded / e.total) * 100));
-                if (progressFill) progressFill.style.width = `${percent}%`;
-                if (progressText) progressText.textContent = `${percent}%`;
-              }
-            };
-            xhr.onload = () => {
-              if (xhr.status >= 200 && xhr.status < 300) resolve();
-              else reject(new Error(`Direct upload failed with status ${xhr.status}`));
-            };
-            xhr.onerror = () => reject(new Error('Network error during video upload'));
-            xhr.send(uploadedFile);
-          });
-        } else {
-          if (progressLabel) progressLabel.textContent = 'Optimizing and Uploading (Backend fallback)…';
+          xhr.upload.onprogress = (e) => {
+            if (e.lengthComputable) {
+              const percent = Math.min(100, Math.round((e.loaded / e.total) * 100));
+              if (progressFill) progressFill.style.width = `${percent}%`;
+              if (progressText) progressText.textContent = `${percent}%`;
+            }
+          };
+          xhr.onload = () => {
+            if (xhr.status >= 200 && xhr.status < 300) resolve();
+            else reject(new Error(`Direct upload failed with status ${xhr.status}`));
+          };
+          xhr.onerror = () => reject(new Error('Network error during video upload'));
+          xhr.send(uploadedFile);
+        });
+      } catch (err) {
+        console.warn('[app] direct presigned upload failed, falling back to backend upload:', err);
+        try {
+          if (progressLabel) progressLabel.textContent = 'Uploading via backend fallback…';
           const formData = new FormData();
           formData.append('video', uploadedFile);
-          
+
           presign = await API.uploadFastStart(formData, (percent) => {
             if (progressFill) progressFill.style.width = `${Math.round(percent)}%`;
             if (progressText) progressText.textContent = `${Math.round(percent)}%`;
           });
+        } catch (fallbackErr) {
+          if (progressWrap) progressWrap.hidden = true;
+          showToast(fallbackErr.message || err.message || 'Failed to upload video', 'error');
+          submitBtn.classList.remove('btn--loading');
+          submitBtn.disabled = false;
+          return;
         }
-      } catch (err) {
-        if (progressWrap) progressWrap.hidden = true;
-        showToast(err.message || 'Failed to prepare video upload', 'error');
-        submitBtn.classList.remove('btn--loading');
-        submitBtn.disabled = false;
-        return;
       }
 
       if (progressLabel) progressLabel.textContent = 'Upload complete! Creating room…';
 
+      // Seed local video into Cinema blob cache so host plays immediately with zero delay
+      if (window.Cinema && typeof Cinema.seedMediaBlob === 'function') {
+        Cinema.seedMediaBlob(presign.streamUrl, uploadedFile);
+      }
 
       options.mediaUrl = presign.streamUrl;
       options.mediaTitle = uTitle;
@@ -1129,6 +1139,9 @@ const App = (() => {
       enterLobby();
       showToast(`Room "${roomName}" (${roomCode}) created`, 'success');
       updateRecordsBadge();
+
+      // Automatically transition to cinema mode so host can start screening immediately
+      handleEnterCinema();
     } catch (e) {
       const msg = e.message || 'Failed to create room';
       if (msg.toLowerCase().includes('room name') || msg.toLowerCase().includes('already active')) {

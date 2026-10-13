@@ -3,6 +3,8 @@ package storage
 import (
 	"context"
 	"fmt"
+	"io"
+	"os"
 	"path/filepath"
 	"strings"
 	"time"
@@ -25,12 +27,14 @@ type PresignResult struct {
 // StorageService defines the interface for object storage operations
 type StorageService interface {
 	PresignPut(ctx context.Context, key string, contentType string, contentLength int64, lifetime time.Duration) (*PresignResult, error)
+	PutObject(ctx context.Context, key string, contentType string, body io.Reader, size int64) (*PresignResult, error)
 	GetStreamURL(key string) string
 	IsConfigured() bool
 }
 
 // R2Storage implements StorageService using Cloudflare R2 via AWS S3 SDK v2
 type R2Storage struct {
+	s3Client      *s3.Client
 	presignClient *s3.PresignClient
 	bucket        string
 	accountID     string
@@ -83,6 +87,7 @@ func NewR2Storage(appCfg *config.Config) (*R2Storage, error) {
 	presignClient := s3.NewPresignClient(s3Client)
 
 	return &R2Storage{
+		s3Client:      s3Client,
 		presignClient: presignClient,
 		bucket:        appCfg.R2BucketName,
 		accountID:     appCfg.R2AccountID,
@@ -146,5 +151,53 @@ func (s *R2Storage) PresignPut(ctx context.Context, key string, contentType stri
 		StreamURL:        streamURL,
 		Key:              key,
 		ExpiresInSeconds: expiresSeconds,
+	}, nil
+}
+
+// PutObject directly uploads a stream into Cloudflare R2 or local disk fallback
+func (s *R2Storage) PutObject(ctx context.Context, key string, contentType string, body io.Reader, size int64) (*PresignResult, error) {
+	streamURL := s.GetStreamURL(key)
+	if s.isConfigured && s.s3Client != nil {
+		putInput := &s3.PutObjectInput{
+			Bucket:      aws.String(s.bucket),
+			Key:         aws.String(key),
+			ContentType: aws.String(contentType),
+			Body:        body,
+		}
+		if size > 0 {
+			putInput.ContentLength = aws.Int64(size)
+		}
+		_, err := s.s3Client.PutObject(ctx, putInput)
+		if err != nil {
+			return nil, fmt.Errorf("failed to upload object to R2: %w", err)
+		}
+		return &PresignResult{
+			UploadURL: streamURL,
+			StreamURL: streamURL,
+			Key:       key,
+		}, nil
+	}
+
+	// Dev simulation mode: save directly to disk
+	cleanName := filepath.Base(filepath.Clean(key))
+	uploadDir := filepath.Join("frontend", "assets", "uploads")
+	if _, err := os.Stat(uploadDir); os.IsNotExist(err) {
+		uploadDir = filepath.Join("..", "frontend", "assets", "uploads")
+	}
+	_ = os.MkdirAll(uploadDir, 0755)
+	destPath := filepath.Join(uploadDir, cleanName)
+	dst, err := os.Create(destPath)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create local file: %w", err)
+	}
+	defer dst.Close()
+	if _, err := io.Copy(dst, body); err != nil {
+		return nil, fmt.Errorf("failed to write local file: %w", err)
+	}
+
+	return &PresignResult{
+		UploadURL: streamURL,
+		StreamURL: streamURL,
+		Key:       key,
 	}, nil
 }

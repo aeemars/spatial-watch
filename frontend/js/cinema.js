@@ -176,6 +176,20 @@ const Cinema = (() => {
   let isMediaReadyState = false;
   let onEndedCallback = null;
 
+  function seedMediaBlob(mediaUrl, blob) {
+    if (!mediaUrl || !blob) return null;
+    const canonical = normalizeUrl(mediaUrl);
+    try {
+      const blobUrl = URL.createObjectURL(blob);
+      blobUrlCache.set(canonical, blobUrl);
+      downloadProgressMap.set(canonical, { percent: 100, loaded: blob.size, total: blob.size });
+      return blobUrl;
+    } catch (e) {
+      console.warn('[cinema] failed to seed media blob:', e);
+      return null;
+    }
+  }
+
   function init(mediaUrl, hostStatus, onReadyCallback, onErrorCallback) {
     isHost = hostStatus;
     canvas = document.getElementById('cinema-canvas');
@@ -260,21 +274,20 @@ const Cinema = (() => {
         XR.setMediaReady(true, { duration: video.duration });
       }
     } else {
-      // Show buffering indicator while downloading / preparing blob
-      showBuffering('Buffering screening for zero-lag playback…', 0);
+      currentMediaUrl = canonical;
+      isMediaReadyState = false;
+      // Immediately bind the media URL so browser Range streaming starts with zero delay
+      video.src = mediaUrl;
+      video.load();
+      showBuffering('Connecting screening stream…', 0);
+
+      // In parallel, buffer into CacheStorage for smooth looping & instant seeking
       getOrFetchMediaBlobUrl(mediaUrl, (pct) => {
-        showBuffering('Buffering screening for zero-lag playback…', pct);
-      }).then((resolvedUrl) => {
-        if (!video) return;
-        currentMediaUrl = canonical;
-        isMediaReadyState = false;
-        video.src = resolvedUrl;
-        video.load();
+        if (!isMediaReadyState) {
+          showBuffering('Buffering screening for zero-lag playback…', pct);
+        }
       }).catch((err) => {
-        currentMediaUrl = canonical;
-        isMediaReadyState = false;
-        video.src = mediaUrl;
-        video.load();
+        console.warn('[cinema] background blob prefetch notice:', err);
       });
     }
 
@@ -742,6 +755,7 @@ const Cinema = (() => {
     showBuffering,
     hideBuffering,
     getCachedBlobUrl,
+    seedMediaBlob,
     onEnded: (cb) => { onEndedCallback = cb; },
     getVideo: () => video,
     isPlaying: () => isPlaying,
