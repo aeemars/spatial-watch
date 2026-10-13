@@ -785,19 +785,7 @@ const App = (() => {
   }
 
   function probeVideoUrl(url) {
-    return new Promise(async (resolve) => {
-      let sizeMB = null;
-      try {
-        // Fetch file size via HEAD request
-        const resp = await fetch(url, { method: 'HEAD' });
-        const len = resp.headers.get('content-length');
-        if (len) {
-          sizeMB = (parseInt(len, 10) / (1024 * 1024)).toFixed(1) + ' MB';
-        }
-      } catch (e) {
-        // Ignore fetch errors
-      }
-
+    return new Promise((resolve) => {
       const v = document.createElement('video');
       v.preload = 'metadata';
       const resolved = new URL(url, window.location.href).href;
@@ -811,7 +799,7 @@ const App = (() => {
         resolve({
           duration: dur,
           resolution: (width && height) ? `${width}x${height}` : '',
-          sizeMB: sizeMB
+          sizeMB: null
         });
       };
 

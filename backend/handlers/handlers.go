@@ -79,13 +79,16 @@ func NewHandler(
 // Health returns service health status and active persistence engine
 func (h *Handler) Health(w http.ResponseWriter, r *http.Request) {
 	persistence := "in-memory"
+	dbName := ""
 	if h.RoomRepo != nil && h.RoomRepo.IsMongo() {
 		persistence = "mongodb"
+		dbName = h.RoomRepo.DatabaseName()
 	}
 
 	respondJSON(w, http.StatusOK, map[string]interface{}{
 		"status":      "ok",
 		"persistence": persistence,
+		"database":    dbName,
 		"time":        time.Now().UTC().Format(time.RFC3339),
 	})
 }

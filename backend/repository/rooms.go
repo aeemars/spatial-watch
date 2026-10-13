@@ -54,6 +54,14 @@ func (r *RoomRepo) IsMongo() bool {
 	return r.col != nil
 }
 
+// DatabaseName returns the active MongoDB database name or empty if in-memory
+func (r *RoomRepo) DatabaseName() string {
+	if r.col != nil && r.col.Database() != nil {
+		return r.col.Database().Name()
+	}
+	return ""
+}
+
 // GenerateRoomCode creates a short human-readable code like SW-AB12
 func GenerateRoomCode() (string, error) {
 	const letters = "ABCDEFGHJKMNPQRSTUVWXYZ"
