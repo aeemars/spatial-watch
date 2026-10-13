@@ -26,8 +26,7 @@ FROM alpine:3.20
 
 WORKDIR /app
 
-# Install ca-certificates, tzdata, and ffmpeg for faststart video optimization
-RUN apk add --no-cache ca-certificates tzdata ffmpeg && \
+RUN apk add --no-cache ca-certificates tzdata && \
     addgroup -g 10001 -S spatialwatch && \
     adduser -u 10001 -S spatialwatch -G spatialwatch
 

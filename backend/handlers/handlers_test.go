@@ -71,7 +71,6 @@ func setupTestRig() *testRig {
 	protected.HandleFunc("/auth/profile", h.UpdateProfile).Methods("PATCH")
 	protected.HandleFunc("/user/rooms", h.GetUserRooms).Methods("GET")
 	protected.HandleFunc("/media/presign-upload", h.PresignUpload).Methods("POST")
-	protected.HandleFunc("/media/upload-faststart", h.UploadFastStart).Methods("POST")
 	protected.HandleFunc("/rooms", h.CreateRoom).Methods("POST")
 	protected.HandleFunc("/rooms/join", h.JoinRoom).Methods("POST")
 	protected.HandleFunc("/rooms/{roomCode}", h.ShutdownRoom).Methods("DELETE")

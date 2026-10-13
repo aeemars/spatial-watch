@@ -43,8 +43,8 @@
     },
     {
       "id": "sw-limit-video-uploads",
-      "description": "Limit Video Uploads: Max 3 POST requests per 10 minutes per IP for both direct presign and faststart transcoding",
-      "expression": "(http.request.method eq \"POST\" and (http.request.uri.path eq \"/api/media/presign-upload\" or http.request.uri.path eq \"/api/media/upload-faststart\"))",
+      "description": "Limit Video Uploads: Max 3 POST requests per 10 minutes per IP for direct presign",
+      "expression": "(http.request.method eq \"POST\" and http.request.uri.path eq \"/api/media/presign-upload\")",
       "action": "block",
       "action_parameters": {
         "response": {
