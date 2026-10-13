@@ -1014,7 +1014,7 @@ const App = (() => {
       if (progressWrap) progressWrap.hidden = false;
       if (progressFill) progressFill.style.width = '0%';
       if (progressText) progressText.textContent = '0%';
-      if (progressLabel) progressLabel.textContent = 'Preparing upload…';
+      if (progressLabel) progressLabel.textContent = 'Requesting direct upload…';
 
       let presign;
       try {
@@ -1032,7 +1032,11 @@ const App = (() => {
         await new Promise((resolve, reject) => {
           const xhr = new XMLHttpRequest();
           xhr.open('PUT', presign.uploadUrl, true);
-          xhr.setRequestHeader('Content-Type', uploadedFile.type || 'video/mp4');
+          if (uploadedFile.type) {
+            xhr.setRequestHeader('Content-Type', uploadedFile.type);
+          } else {
+            xhr.setRequestHeader('Content-Type', 'video/mp4');
+          }
 
           xhr.upload.onprogress = (e) => {
             if (e.lengthComputable) {
@@ -1042,30 +1046,23 @@ const App = (() => {
             }
           };
           xhr.onload = () => {
-            if (xhr.status >= 200 && xhr.status < 300) resolve();
-            else reject(new Error(`Direct upload failed with status ${xhr.status}`));
+            if (xhr.status >= 200 && xhr.status < 300) {
+              resolve();
+            } else {
+              reject(new Error(`Storage direct upload failed with status ${xhr.status} (${xhr.statusText || 'Error'})`));
+            }
           };
-          xhr.onerror = () => reject(new Error('Network error during video upload'));
+          xhr.onerror = () => {
+            reject(new Error('Network or CORS error connecting directly to storage bucket'));
+          };
           xhr.send(uploadedFile);
         });
       } catch (err) {
-        console.warn('[app] direct presigned upload failed, falling back to backend upload:', err);
-        try {
-          if (progressLabel) progressLabel.textContent = 'Uploading via backend fallback…';
-          const formData = new FormData();
-          formData.append('video', uploadedFile);
-
-          presign = await API.uploadFastStart(formData, (percent) => {
-            if (progressFill) progressFill.style.width = `${Math.round(percent)}%`;
-            if (progressText) progressText.textContent = `${Math.round(percent)}%`;
-          });
-        } catch (fallbackErr) {
-          if (progressWrap) progressWrap.hidden = true;
-          showToast(fallbackErr.message || err.message || 'Failed to upload video', 'error');
-          submitBtn.classList.remove('btn--loading');
-          submitBtn.disabled = false;
-          return;
-        }
+        if (progressWrap) progressWrap.hidden = true;
+        showToast(err.message || 'Failed to upload video to storage', 'error');
+        submitBtn.classList.remove('btn--loading');
+        submitBtn.disabled = false;
+        return;
       }
 
       if (progressLabel) progressLabel.textContent = 'Upload complete! Creating room…';
