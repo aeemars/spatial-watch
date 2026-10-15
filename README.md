@@ -1,6 +1,6 @@
 # Spatial Watch
 
-> **Spatial Watch** is a hands-first social virtual cinema for Meta VR devices and modern web browsers. It brings friends together into private virtual screening rooms to watch synchronized films with controller-free hand/pinch interactions, floating 3D spatial reactions, and an interactive "Director's Cut" scene commentary system — running entirely through WebXR with zero app installation.
+> **Spatial Watch** is a hands-first social virtual cinema for Meta VR devices and modern web browsers. It brings friends together into private virtual screening rooms to watch synchronized films with controller-free hand/pinch interactions, floating 3D spatial reactions, and an interactive "Director's Cut" scene commentary system running entirely through WebXR with zero app installation.
 
 ![Spatial Watch](https://img.shields.io/badge/Platform-WebXR-blue) ![Go](https://img.shields.io/badge/Backend-Go-00ADD8) ![MongoDB](https://img.shields.io/badge/Database-MongoDB%20Atlas-47A248)
 
