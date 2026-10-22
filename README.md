@@ -91,7 +91,7 @@ Standard room and social cinema collections, with unique index on `roomCode` and
 
 ### Prerequisites
 
-- **Go** 1.21+ (tested on Go 1.25)
+- **Go** 1.21+ (tested on Go 1.27.3)
 - **MongoDB** *(Optional)*: The backend includes a built-in, concurrent in-memory repository fallback. The app runs fully and passes all tests without a MongoDB instance running.
 - A modern browser (Chrome, Edge, Meta Quest Browser)
 
