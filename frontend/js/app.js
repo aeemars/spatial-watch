@@ -2287,6 +2287,7 @@ const App = (() => {
     handleShutdownCurrentRoom,
     showConfirmDialog,
     closeConfirmDialog,
+    isUserHost: () => isHost,
   };
 })();
 

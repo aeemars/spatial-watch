@@ -1,0 +1,9 @@
+{
+  "name": "spatial-watch",
+  "version": "1.0.0",
+  "description": "Spatial Watch — Synchronized Social Cinema for Meta Quest WebXR & Desktop",
+  "private": true,
+  "scripts": {
+    "test": "node --test tests/**/*.test.js"
+  }
+}

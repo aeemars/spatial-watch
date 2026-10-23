@@ -202,38 +202,37 @@ The architecture is explicitly designed so external authentication can be added 
 
 ---
 
-## Testing WebXR on Meta Quest
+## WebXR on Meta Quest
 
-### Requirements
+### Architecture & Connection Flow
 
-- Meta Quest 2, 3, or Pro
-- Meta Quest Browser
-- The server must be accessible from the Quest (same network or deployed)
+Spatial Watch uses a direct **Meta Quest Browser → WebXR session** architecture without any desktop-to-headset pairing.
 
-### Steps
+1. **Open in Headset**: User opens Spatial Watch in Meta Quest Browser over HTTPS (or an HTTPS tunnel).
+2. **Feature Detection**: App detects `immersive-vr` capability without presuming hand tracking is active before a session exists.
+3. **Room & Media Readiness**: User creates or joins a room. Video metadata and initial buffer load in the background. The "Enter VR Cinema" button remains disabled until media is ready.
+4. **Explicit User Activation**: User explicitly presses **"Enter VR Cinema"**.
+5. **Immersive Session**: App requests an `immersive-vr` session with optional `hand-tracking`, attaches input handlers immediately to the active session, inspects `inputSources` for hand support dynamically, and exposes hands-first seated controls with automatic gaze-dwell fallback.
 
-1. Deploy the app or use a tunneling service (e.g., ngrok, Cloudflare Tunnel)
-2. Open the URL in Meta Quest Browser
-3. The landing page should show "Immersive VR + hand tracking available"
-4. Create or join a room → enter the cinema
-5. Click the VR headset icon in the cinema controls
-6. The scene enters immersive VR mode
-7. Use **hand pinch** gestures or **gaze dwell** (800ms) to interact with the floating control panel:
-   - Play/Pause
-   - Seek ±10s
-   - Director's Cut toggle
-   - Reactions
-   - Exit
+### Manual Meta Quest Acceptance Checklist
 
-### Checks Requiring Physical Hardware
+Required physical-device test procedure for release sign-off:
 
-- [ ] Hand tracking pinch detection accuracy
-- [ ] Gaze dwell timing feels natural
-- [ ] Spatial control panel is comfortably positioned for seated use
-- [ ] Video texture renders correctly on the cinema screen
-- [ ] Frame rate stays above 72fps on Quest hardware
-- [ ] Seat markers and name labels are readable at distance
-- [ ] Reactions render in 3D space without motion discomfort
+- [ ] **1. Headset HTTPS Access**: Open the deployed HTTPS URL (e.g. `https://spatial-watch.aeemarrs.workers.dev` or an HTTPS tunnel) in Meta Quest Browser. Verify secure context check passes.
+- [ ] **2. Hands-Only Navigation**: Create or join a room using hand tracking and virtual pointer exclusively without waking or pairing controllers.
+- [ ] **3. Preflight Inspection**: Confirm WebXR shows *"Immersive VR supported (Meta Quest detected)"*, Secure Connection is verified, and Input shows *"Hand tracking will be checked after entering VR; gaze fallback available."*
+- [ ] **4. Explicit VR Entry**: Wait for media stream preparation to complete, then press the enabled **"Enter VR Cinema"** button.
+- [ ] **5. Dynamic Hand Detection**: Confirm the app detects active hand tracking only after an actual hand input source is present (*"Hand tracking active"*).
+- [ ] **6. In-VR Pinch Interaction**: Use hand pinch gestures to activate floating panel controls: play/pause, seek ±10s, reactions, Director's Cut toggle, and exit.
+- [ ] **7. Gaze Fallback Verification**: Lower hands out of headset view or disable hand tracking; verify that gazing at any button triggers the 800ms dwell ring and activates the control without controllers.
+- [ ] **8. Re-entry & Loop Cleanup**: Exit VR to lobby and re-enter three consecutive times; verify that action triggers never duplicate, gaze intervals do not leak, and visual rings are cleaned up.
+- [ ] **9. Theater Comfort & Video Texture**: Confirm Three.js `VideoTexture` renders smoothly, audio/video playback stays in sync, and spatial controls remain comfortable in a seated stationary position.
+- [ ] **10. Controller Independence**: Confirm the entire primary flow from room creation to cinema playback operates hands-first with zero controller pairing required.
+
+### Automated vs. Physical Validation
+
+- **Automated / Static Coverage**: Node.js test suite (`node --test tests/webxr.test.js`) verifies WebXR capability detection, dynamic input source inspection, immediate session listener binding, gaze interval/dwell lifecycle cleanup, media readiness gating, and recoverable rejected-session error handling.
+- **Physical Validation**: Comfort ergonomics, optical frame-rates (72Hz+), Quest Browser pinch sensitivity, and physical camera occlusion are validated using the checklist above.
 
 ---
 

@@ -1,6 +1,6 @@
 /* ═══════════════════════════════════════════════════════════
    SPATIAL WATCH — WebXR Module
-   Immersive VR session with hand tracking and gaze interaction
+   Immersive VR session with verified hand tracking & gaze fallback
    Optimized for seated Meta Quest use
    ═══════════════════════════════════════════════════════════ */
 
@@ -9,153 +9,249 @@ const XR = (() => {
   let xrSupported = false;
   let handSupported = false;
   let mediaReady = null;
-  let controllerGrips = [];
-  let handModels = [];
+  let mediaErrorDetails = null;
   let uiPanel = null;
   let gazeTarget = null;
   let gazeDwellTimer = null;
+  let gazeCheckInterval = null;
+  let gazeIndicator = null;
+  let lastActionTimestamp = 0;
+  let sourcesChangeHandler = null;
+  let sessionEndHandler = null;
+
   const GAZE_DWELL_MS = 800;
 
-  const isQuest = /Quest|OculusBrowser/i.test(navigator.userAgent);
-  const isSecure = window.isSecureContext || window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1';
+  function getNavigator() {
+    return typeof navigator !== 'undefined' ? navigator : null;
+  }
 
-  // Check WebXR support
+  function getWindow() {
+    return typeof window !== 'undefined' ? window : null;
+  }
+
+  function getDocument() {
+    return typeof document !== 'undefined' ? document : null;
+  }
+
+  function isQuestBrowser() {
+    const nav = getNavigator();
+    return Boolean(nav && /Quest|OculusBrowser/i.test(nav.userAgent || ''));
+  }
+
+  function checkSecureContext() {
+    const win = getWindow();
+    if (!win || !win.location) {
+      return { isSecure: true, isHttps: true, isLocalhost: false };
+    }
+    const isHttps = win.location.protocol === 'https:';
+    const isLocalhost = win.location.hostname === 'localhost' || win.location.hostname === '127.0.0.1';
+    const isQuest = isQuestBrowser();
+    // Quest production requires HTTPS; localhost is valid only for local development on the same device
+    const isSecure = Boolean(win.isSecureContext || (isLocalhost && !isQuest));
+    return { isSecure, isHttps, isLocalhost };
+  }
+
+  // Check WebXR immersive-vr capability (does not assume hands are available)
   async function checkSupport() {
-    const statusEl = document.getElementById('xr-status');
-    const statusText = document.getElementById('xr-status-text');
-    const enterVRBtn = document.getElementById('btn-enter-vr');
+    const doc = getDocument();
+    const nav = getNavigator();
 
-    if (!navigator.xr) {
+    const statusEl = doc ? doc.getElementById('xr-status') : null;
+    const statusText = doc ? doc.getElementById('xr-status-text') : null;
+    const enterVRBtn = doc ? doc.getElementById('btn-enter-vr') : null;
+    const isQuest = isQuestBrowser();
+
+    if (!nav || !nav.xr || typeof nav.xr.isSessionSupported !== 'function') {
       xrSupported = false;
-      if (statusText) statusText.textContent = 'WebXR not available — desktop mode';
-      if (statusEl) statusEl.classList.add('xr-status--unsupported');
+      handSupported = false;
+      if (statusText) statusText.textContent = 'WebXR unavailable — Desktop Preview available';
+      if (statusEl) {
+        statusEl.classList.remove('xr-status--supported');
+        statusEl.classList.add('xr-status--unsupported');
+      }
       updatePreflightUI();
       return false;
     }
 
     try {
-      xrSupported = await navigator.xr.isSessionSupported('immersive-vr');
+      xrSupported = await nav.xr.isSessionSupported('immersive-vr');
     } catch (e) {
       xrSupported = false;
     }
 
+    // Hand tracking availability must only be verified after the session is created
+    handSupported = false;
+
     if (xrSupported) {
       if (enterVRBtn) enterVRBtn.hidden = false;
-      handSupported = true; // Meta Quest Browser supports hand tracking
       if (statusText) {
         statusText.textContent = isQuest
-          ? 'Meta Quest VR + hand tracking ready'
-          : 'Immersive VR available';
+          ? 'Immersive VR supported (Meta Quest detected)'
+          : 'Immersive VR supported';
       }
-      if (statusEl) statusEl.classList.add('xr-status--supported');
+      if (statusEl) {
+        statusEl.classList.remove('xr-status--unsupported');
+        statusEl.classList.add('xr-status--supported');
+      }
     } else {
-      if (statusText) statusText.textContent = 'VR not supported — desktop mode';
-      if (statusEl) statusEl.classList.add('xr-status--unsupported');
+      if (statusText) statusText.textContent = 'WebXR unavailable — Desktop Preview available';
+      if (statusEl) {
+        statusEl.classList.remove('xr-status--supported');
+        statusEl.classList.add('xr-status--unsupported');
+      }
     }
 
     updatePreflightUI();
     return xrSupported;
   }
 
-  // Update media readiness status (called when video loadedmetadata fires)
+  // Refresh hand tracking capability by inspecting actual active input sources
+  function refreshInputCapabilities() {
+    if (xrSession && xrSession.inputSources) {
+      const sources = Array.from(xrSession.inputSources);
+      handSupported = sources.some(source => !!source && !!source.hand);
+    } else {
+      handSupported = false;
+    }
+    updatePreflightUI();
+  }
+
+  // Update media readiness status (called when video loadedmetadata fires or error occurs)
   function setMediaReady(ready, details = {}) {
-    mediaReady = !!ready;
+    mediaReady = ready === true ? true : (ready === false ? false : null);
+    mediaErrorDetails = details || null;
     updatePreflightUI();
   }
 
   // Update the lobby VR readiness preflight card and Enter button
   function updatePreflightUI() {
-    const dot = document.getElementById('vr-readiness-dot');
-    const chip = document.getElementById('vr-readiness-chip');
-    const preflightXrIcon = document.getElementById('preflight-xr-icon');
-    const preflightXrText = document.getElementById('preflight-xr-text');
-    const preflightSecIcon = document.getElementById('preflight-secure-icon');
-    const preflightSecText = document.getElementById('preflight-secure-text');
-    const preflightInpIcon = document.getElementById('preflight-input-icon');
-    const preflightInpText = document.getElementById('preflight-input-text');
-    const enterBtn = document.getElementById('btn-enter-cinema');
-    const enterLabel = document.getElementById('btn-enter-cinema-label');
+    const doc = getDocument();
+    if (!doc) return;
 
-    // Secure context status
+    const dot = doc.getElementById('vr-readiness-dot');
+    const chip = doc.getElementById('vr-readiness-chip');
+    const preflightXrIcon = doc.getElementById('preflight-xr-icon');
+    const preflightXrText = doc.getElementById('preflight-xr-text');
+    const preflightSecIcon = doc.getElementById('preflight-secure-icon');
+    const preflightSecText = doc.getElementById('preflight-secure-text');
+    const preflightInpIcon = doc.getElementById('preflight-input-icon');
+    const preflightInpText = doc.getElementById('preflight-input-text');
+    const enterBtn = doc.getElementById('btn-enter-cinema');
+    const enterLabel = doc.getElementById('btn-enter-cinema-label');
+
+    const isQuest = isQuestBrowser();
+    const { isSecure, isHttps, isLocalhost } = checkSecureContext();
+
+    // 1. Secure context status
     if (preflightSecIcon && preflightSecText) {
-      if (isSecure) {
+      if (isHttps) {
         preflightSecIcon.className = 'preflight-item__status is-passed';
         preflightSecIcon.textContent = '✓';
         preflightSecText.textContent = 'Secure Connection: Verified (HTTPS)';
+      } else if (isLocalhost) {
+        preflightSecIcon.className = 'preflight-item__status is-notice';
+        preflightSecIcon.textContent = 'ℹ';
+        preflightSecText.textContent = 'Development Context: Localhost (Same-device only; Quest requires HTTPS or HTTPS tunnel)';
       } else {
-        preflightSecIcon.className = 'preflight-item__status';
+        preflightSecIcon.className = 'preflight-item__status is-failed';
         preflightSecIcon.textContent = '⚠️';
-        preflightSecText.textContent = 'Insecure Context: HTTPS required for VR';
+        preflightSecText.textContent = 'Insecure Context: HTTPS required for Quest WebXR';
       }
     }
 
-    if (xrSupported) {
-      // Immersive VR capable (e.g. Meta Quest Browser)
-      if (dot) {
-        dot.className = 'vr-readiness__dot' + (mediaReady ? ' is-ready' : '');
-      }
-      if (chip) {
-        chip.textContent = mediaReady
-          ? (isQuest ? 'Meta Quest VR Ready' : 'VR Ready')
-          : 'Loading Media…';
-        chip.className = 'chip chip--xs ' + (mediaReady ? 'chip--gold' : 'chip--violet');
-      }
-
-      if (preflightXrIcon && preflightXrText) {
+    // 2. WebXR support status
+    if (preflightXrIcon && preflightXrText) {
+      if (xrSupported) {
         preflightXrIcon.className = 'preflight-item__status is-passed';
         preflightXrIcon.textContent = '✓';
         preflightXrText.textContent = isQuest
-          ? 'Meta Quest: Immersive VR Ready'
-          : 'WebXR: Immersive VR Supported';
+          ? 'Immersive VR supported (Meta Quest detected)'
+          : 'Immersive VR supported';
+      } else {
+        preflightXrIcon.className = 'preflight-item__status is-notice';
+        preflightXrIcon.textContent = 'ℹ';
+        preflightXrText.textContent = 'WebXR unavailable — Desktop Preview available';
       }
+    }
 
-      if (preflightInpIcon && preflightInpText) {
+    // 3. Input status (accurate lifecycle text)
+    if (preflightInpIcon && preflightInpText) {
+      if (xrSession) {
+        if (handSupported) {
+          preflightInpIcon.className = 'preflight-item__status is-passed';
+          preflightInpIcon.textContent = '✓';
+          preflightInpText.textContent = 'Hand tracking active.';
+        } else {
+          preflightInpIcon.className = 'preflight-item__status is-notice';
+          preflightInpIcon.textContent = 'ℹ';
+          preflightInpText.textContent = 'Gaze dwell active; hand tracking not detected.';
+        }
+      } else if (xrSupported) {
         preflightInpIcon.className = 'preflight-item__status is-passed';
         preflightInpIcon.textContent = '✓';
-        preflightInpText.textContent = 'Input: Hand Tracking & Gaze (Seated Mode)';
+        preflightInpText.textContent = 'Hand tracking will be checked after entering VR; gaze fallback available.';
+      } else {
+        preflightInpIcon.className = 'preflight-item__status is-notice';
+        preflightInpIcon.textContent = 'ℹ';
+        preflightInpText.textContent = 'Input: Mouse Viewport & Keyboard';
       }
+    }
 
-      // Enter button
-      if (enterBtn && enterLabel) {
+    // 4. Dot indicator
+    if (dot) {
+      if (xrSupported) {
+        dot.className = 'vr-readiness__dot' + (mediaReady === true ? ' is-ready' : '');
+      } else {
+        dot.className = 'vr-readiness__dot is-desktop' + (mediaReady === true ? ' is-ready' : '');
+      }
+    }
+
+    // 5. Readiness Chip
+    if (chip) {
+      if (mediaReady === true) {
+        if (xrSupported) {
+          chip.textContent = isQuest ? 'VR Ready (Meta Quest)' : 'VR Ready';
+          chip.className = 'chip chip--xs chip--gold';
+        } else {
+          chip.textContent = 'Desktop Preview Ready';
+          chip.className = 'chip chip--xs chip--neutral';
+        }
+      } else if (mediaReady === false) {
+        chip.textContent = 'Media Stream Error';
+        chip.className = 'chip chip--xs chip--danger';
+      } else {
+        chip.textContent = 'Preparing Media Stream…';
+        chip.className = 'chip chip--xs chip--violet';
+      }
+    }
+
+    // 6. Enter Cinema / Enter VR Button
+    if (enterBtn && enterLabel) {
+      if (xrSupported) {
         if (mediaReady === true) {
           enterBtn.disabled = false;
           enterLabel.textContent = 'Enter VR Cinema';
         } else if (mediaReady === false) {
           enterBtn.disabled = true;
-          enterLabel.textContent = 'Media Stream Error - Check File';
+          const msg = (mediaErrorDetails && mediaErrorDetails.message)
+            ? mediaErrorDetails.message
+            : 'Media Stream Error — Check File / CORS';
+          enterLabel.textContent = msg;
         } else {
           enterBtn.disabled = true;
           enterLabel.textContent = 'Preparing Media Stream…';
         }
-      }
-    } else {
-      // Desktop / 2D Browser Fallback
-      if (dot) dot.className = 'vr-readiness__dot is-desktop' + (mediaReady ? ' is-ready' : '');
-      if (chip) {
-        chip.textContent = mediaReady ? 'Desktop Preview Ready' : 'Loading Media…';
-        chip.className = 'chip chip--xs ' + (mediaReady ? 'chip--neutral' : 'chip--violet');
-      }
-
-      if (preflightXrIcon && preflightXrText) {
-        preflightXrIcon.className = 'preflight-item__status is-notice';
-        preflightXrIcon.textContent = 'ℹ';
-        preflightXrText.textContent = 'WebXR Unavailable: Desktop 3D Mode';
-      }
-
-      if (preflightInpIcon && preflightInpText) {
-        preflightInpIcon.className = 'preflight-item__status is-notice';
-        preflightInpIcon.textContent = 'ℹ';
-        preflightInpText.textContent = 'Input: Mouse Viewport & Keyboard';
-      }
-
-      // Enter button for desktop preview
-      if (enterBtn && enterLabel) {
+      } else {
+        // Desktop 2D mode
         if (mediaReady === true) {
           enterBtn.disabled = false;
           enterLabel.textContent = 'Enter Cinema (Desktop Preview)';
         } else if (mediaReady === false) {
           enterBtn.disabled = true;
-          enterLabel.textContent = 'Media Stream Error - Check File';
+          const msg = (mediaErrorDetails && mediaErrorDetails.message)
+            ? mediaErrorDetails.message
+            : 'Media Stream Error — Check File / CORS';
+          enterLabel.textContent = msg;
         } else {
           enterBtn.disabled = true;
           enterLabel.textContent = 'Preparing Media Stream…';
@@ -168,7 +264,10 @@ const XR = (() => {
   async function enterVR() {
     if (!xrSupported || xrSession) return;
 
-    const renderer = Cinema.getRenderer();
+    const nav = getNavigator();
+    if (!nav || !nav.xr) return;
+
+    const renderer = (typeof Cinema !== 'undefined' && Cinema.getRenderer) ? Cinema.getRenderer() : null;
     if (!renderer) return;
 
     try {
@@ -180,41 +279,89 @@ const XR = (() => {
         ],
       };
 
-      xrSession = await navigator.xr.requestSession('immersive-vr', sessionInit);
-      renderer.xr.setSession(xrSession);
+      const session = await nav.xr.requestSession('immersive-vr', sessionInit);
+      xrSession = session;
 
-      xrSession.addEventListener('end', () => {
-        xrSession = null;
-        cleanupVR();
-      });
+      if (renderer.xr && typeof renderer.xr.setSession === 'function') {
+        renderer.xr.setSession(xrSession);
+      }
+
+      // Attach input listeners directly to the active session immediately
+      setupXRInputHandlers(xrSession);
+      refreshInputCapabilities();
+
+      sourcesChangeHandler = () => refreshInputCapabilities();
+      sessionEndHandler = () => {
+        handleSessionEnd();
+      };
+
+      xrSession.addEventListener('inputsourceschange', sourcesChangeHandler);
+      xrSession.addEventListener('end', sessionEndHandler);
 
       // Create VR UI panel
       createVRControls();
-
-      // Set up hand tracking if available
-      setupHandTracking();
 
       // Set up gaze fallback
       setupGazeInteraction();
 
     } catch (e) {
       console.error('[xr] Failed to start VR session:', e);
-      App.showToast('Failed to enter VR mode', 'error');
+      cleanupVR();
+      xrSession = null;
+      if (typeof App !== 'undefined' && App.showToast) {
+        App.showToast('Failed to enter VR mode: ' + (e.message || 'Session rejected or unavailable'), 'error');
+      }
+      updatePreflightUI();
     }
+  }
+
+  function handleSessionEnd() {
+    xrSession = null;
+    cleanupVR();
   }
 
   // Exit VR session
   async function exitVR() {
     if (xrSession) {
-      await xrSession.end();
+      const session = xrSession;
       xrSession = null;
-      cleanupVR();
+      try {
+        await session.end();
+      } catch (e) {
+        console.warn('[xr] Error ending XR session:', e);
+      }
     }
+    cleanupVR();
+  }
+
+  // Attach input handlers directly to newly created XR session
+  function setupXRInputHandlers(session) {
+    if (!session || typeof session.addEventListener !== 'function') return;
+
+    const raycaster = (typeof THREE !== 'undefined' && THREE.Raycaster) ? new THREE.Raycaster() : null;
+
+    const onSelectStart = (event) => {
+      const now = Date.now();
+      if (now - lastActionTimestamp < 350) return; // Debounce to prevent duplicate activations
+      lastActionTimestamp = now;
+      handleVRSelect(raycaster, event);
+    };
+
+    const onSqueeze = (event) => {
+      const now = Date.now();
+      if (now - lastActionTimestamp < 350) return; // Prevent duplicate triggers if both fire
+      lastActionTimestamp = now;
+      handleVRSelect(raycaster, event);
+    };
+
+    session.addEventListener('selectstart', onSelectStart);
+    session.addEventListener('squeeze', onSqueeze);
   }
 
   // Create spatial control panel for VR
   function createVRControls() {
-    const scene = Cinema.getScene();
+    if (typeof THREE === 'undefined') return;
+    const scene = (typeof Cinema !== 'undefined' && Cinema.getScene) ? Cinema.getScene() : null;
     if (!scene) return;
 
     const panelGroup = new THREE.Group();
@@ -251,8 +398,11 @@ const XR = (() => {
       { label: '🚪', action: 'exit', x: 0.7 },
     ];
 
+    const doc = getDocument();
+
     buttons.forEach(({ label, action, x }) => {
-      const btnCanvas = document.createElement('canvas');
+      if (!doc) return;
+      const btnCanvas = doc.createElement('canvas');
       btnCanvas.width = 128;
       btnCanvas.height = 128;
       const ctx = btnCanvas.getContext('2d');
@@ -291,7 +441,8 @@ const XR = (() => {
     const reactionTypes = ['applause', 'laugh', 'heart', 'surprised', 'wow', 'popcorn'];
 
     reactions.forEach((emoji, i) => {
-      const rCanvas = document.createElement('canvas');
+      if (!doc) return;
+      const rCanvas = doc.createElement('canvas');
       rCanvas.width = 64;
       rCanvas.height = 64;
       const ctx = rCanvas.getContext('2d');
@@ -316,39 +467,15 @@ const XR = (() => {
     uiPanel = panelGroup;
   }
 
-  // Set up hand tracking interaction
-  function setupHandTracking() {
-    const renderer = Cinema.getRenderer();
-    if (!renderer) return;
-
-    // Create raycaster for hand-based interaction
-    const raycaster = new THREE.Raycaster();
-    const pointer = new THREE.Vector2();
-
-    // XR hand sources will be checked each frame
-    renderer.xr.addEventListener('sessionstart', () => {
-      const session = renderer.xr.getSession();
-      if (!session) return;
-
-      session.addEventListener('selectstart', (event) => {
-        handleVRSelect(raycaster, event);
-      });
-
-      session.addEventListener('squeeze', (event) => {
-        handleVRSelect(raycaster, event);
-      });
-    });
-  }
-
   // Handle VR button selection via pinch or squeeze
   function handleVRSelect(raycaster, event) {
-    if (!uiPanel) return;
+    if (!uiPanel || !raycaster) return;
 
-    const camera = Cinema.getCamera();
-    const scene = Cinema.getScene();
+    const camera = (typeof Cinema !== 'undefined' && Cinema.getCamera) ? Cinema.getCamera() : null;
+    const scene = (typeof Cinema !== 'undefined' && Cinema.getScene) ? Cinema.getScene() : null;
     if (!camera || !scene) return;
 
-    // Use gaze direction for interaction
+    // Standard Quest seated gaze-pinch interaction: raycast along camera forward vector (0, 0)
     raycaster.setFromCamera(new THREE.Vector2(0, 0), camera);
     const intersects = raycaster.intersectObjects(uiPanel.children, false);
 
@@ -357,19 +484,53 @@ const XR = (() => {
       if (hit.userData && hit.userData.isButton) {
         executeVRAction(hit.userData);
         // Visual feedback — brief flash
-        const origColor = hit.material.color.clone();
-        hit.material.color.set(0xe7bc72);
-        setTimeout(() => {
-          hit.material.color.copy(origColor);
-        }, 200);
+        if (hit.material && hit.material.color) {
+          const origColor = hit.material.color.clone();
+          hit.material.color.set(0xe7bc72);
+          setTimeout(() => {
+            if (hit.material && hit.material.color) {
+              hit.material.color.copy(origColor);
+            }
+          }, 200);
+        }
       }
+    }
+  }
+
+  // Stop gaze interaction loop and dispose of indicator objects
+  function stopGazeInteraction() {
+    if (gazeCheckInterval) {
+      clearInterval(gazeCheckInterval);
+      gazeCheckInterval = null;
+    }
+
+    if (gazeDwellTimer) {
+      clearTimeout(gazeDwellTimer);
+      gazeDwellTimer = null;
+    }
+    gazeTarget = null;
+
+    if (gazeIndicator) {
+      if (gazeIndicator.parent) {
+        gazeIndicator.parent.remove(gazeIndicator);
+      }
+      if (gazeIndicator.geometry && typeof gazeIndicator.geometry.dispose === 'function') {
+        gazeIndicator.geometry.dispose();
+      }
+      if (gazeIndicator.material && typeof gazeIndicator.material.dispose === 'function') {
+        gazeIndicator.material.dispose();
+      }
+      gazeIndicator = null;
     }
   }
 
   // Set up gaze interaction as fallback
   function setupGazeInteraction() {
-    const renderer = Cinema.getRenderer();
-    if (!renderer) return;
+    // Clear any existing gaze interval, timer, and indicators first
+    stopGazeInteraction();
+
+    const renderer = (typeof Cinema !== 'undefined' && Cinema.getRenderer) ? Cinema.getRenderer() : null;
+    if (!renderer || typeof THREE === 'undefined') return;
 
     const raycaster = new THREE.Raycaster();
     const gazeIndicatorGeo = new THREE.RingGeometry(0.005, 0.008, 32);
@@ -379,19 +540,19 @@ const XR = (() => {
       transparent: true,
       opacity: 0.8,
     });
-    const gazeIndicator = new THREE.Mesh(gazeIndicatorGeo, gazeIndicatorMat);
+    gazeIndicator = new THREE.Mesh(gazeIndicatorGeo, gazeIndicatorMat);
     gazeIndicator.position.set(0, 0, -1);
 
-    const camera = Cinema.getCamera();
+    const camera = (typeof Cinema !== 'undefined' && Cinema.getCamera) ? Cinema.getCamera() : null;
     if (camera) camera.add(gazeIndicator);
-
-    // Gaze dwell detection runs in the render loop
-    const originalLoop = renderer.xr.getSession ? renderer.getAnimationLoop : null;
 
     function gazeCheck() {
       if (!xrSession || !uiPanel) return;
 
-      raycaster.setFromCamera(new THREE.Vector2(0, 0), camera);
+      const currentCamera = (typeof Cinema !== 'undefined' && Cinema.getCamera) ? Cinema.getCamera() : null;
+      if (!currentCamera) return;
+
+      raycaster.setFromCamera(new THREE.Vector2(0, 0), currentCamera);
       const intersects = raycaster.intersectObjects(uiPanel.children, false);
 
       if (intersects.length > 0) {
@@ -399,15 +560,19 @@ const XR = (() => {
         if (hit.userData && hit.userData.isButton) {
           if (gazeTarget !== hit) {
             gazeTarget = hit;
-            clearTimeout(gazeDwellTimer);
+            if (gazeDwellTimer) clearTimeout(gazeDwellTimer);
 
             // Start dwell timer
             gazeDwellTimer = setTimeout(() => {
               executeVRAction(hit.userData);
               // Feedback pulse
-              const scale = hit.scale.clone();
-              hit.scale.multiplyScalar(0.9);
-              setTimeout(() => hit.scale.copy(scale), 150);
+              if (hit.scale) {
+                const scale = hit.scale.clone();
+                hit.scale.multiplyScalar(0.9);
+                setTimeout(() => {
+                  if (hit.scale) hit.scale.copy(scale);
+                }, 150);
+              }
               gazeTarget = null;
             }, GAZE_DWELL_MS);
           }
@@ -415,69 +580,150 @@ const XR = (() => {
         }
       }
 
-      // Reset gaze
+      // Reset gaze if looking away
       if (gazeTarget) {
         gazeTarget = null;
-        clearTimeout(gazeDwellTimer);
+        if (gazeDwellTimer) {
+          clearTimeout(gazeDwellTimer);
+          gazeDwellTimer = null;
+        }
       }
     }
 
-    // Attach gaze check to animation loop
-    setInterval(gazeCheck, 100);
+    gazeCheckInterval = setInterval(gazeCheck, 100);
   }
 
-  // Execute a VR control action
+  // Execute a VR control action with server-side host authorization preservation
   function executeVRAction(userData) {
+    if (!userData || !userData.action) return;
+
+    const isHost = typeof App !== 'undefined' && typeof App.isUserHost === 'function' ? App.isUserHost() : true;
+
     switch (userData.action) {
       case 'play-pause':
-        if (Cinema.isPlaying()) {
-          Cinema.pause();
-          WS.sendPlayback('pause', Cinema.getCurrentTime());
-        } else {
-          Cinema.play();
-          WS.sendPlayback('play', Cinema.getCurrentTime());
+        if (!isHost) {
+          if (typeof App !== 'undefined' && App.showToast) {
+            App.showToast('Only the host can control screening playback', 'warning');
+          }
+          return;
+        }
+        if (typeof Cinema !== 'undefined') {
+          if (Cinema.isPlaying()) {
+            Cinema.pause();
+            if (typeof WS !== 'undefined' && WS.sendPlayback) {
+              WS.sendPlayback('pause', Cinema.getCurrentTime());
+            }
+          } else {
+            Cinema.play();
+            if (typeof WS !== 'undefined' && WS.sendPlayback) {
+              WS.sendPlayback('play', Cinema.getCurrentTime());
+            }
+          }
         }
         break;
 
       case 'seek-back':
-        const backPos = Math.max(0, Cinema.getCurrentTime() - 10);
-        Cinema.seek(backPos);
-        WS.sendPlayback('seek', backPos);
+        if (!isHost) {
+          if (typeof App !== 'undefined' && App.showToast) {
+            App.showToast('Only the host can seek playback', 'warning');
+          }
+          return;
+        }
+        if (typeof Cinema !== 'undefined') {
+          const backPos = Math.max(0, Cinema.getCurrentTime() - 10);
+          Cinema.seek(backPos);
+          if (typeof WS !== 'undefined' && WS.sendPlayback) {
+            WS.sendPlayback('seek', backPos);
+          }
+        }
         break;
 
       case 'seek-forward':
-        const fwdPos = Cinema.getCurrentTime() + 10;
-        Cinema.seek(fwdPos);
-        WS.sendPlayback('seek', fwdPos);
+        if (!isHost) {
+          if (typeof App !== 'undefined' && App.showToast) {
+            App.showToast('Only the host can seek playback', 'warning');
+          }
+          return;
+        }
+        if (typeof Cinema !== 'undefined') {
+          const fwdPos = Cinema.getCurrentTime() + 10;
+          Cinema.seek(fwdPos);
+          if (typeof WS !== 'undefined' && WS.sendPlayback) {
+            WS.sendPlayback('seek', fwdPos);
+          }
+        }
         break;
 
       case 'director-cut':
-        const newState = !DirectorsCut.isEnabled();
-        DirectorsCut.setEnabled(newState);
-        WS.sendDirectorCut(newState);
+        if (!isHost) {
+          if (typeof App !== 'undefined' && App.showToast) {
+            App.showToast('Only the host can toggle Director’s Cut', 'warning');
+          }
+          return;
+        }
+        if (typeof DirectorsCut !== 'undefined') {
+          const newState = !DirectorsCut.isEnabled();
+          DirectorsCut.setEnabled(newState);
+          if (typeof WS !== 'undefined' && WS.sendDirectorCut) {
+            WS.sendDirectorCut(newState);
+          }
+        }
         break;
 
       case 'reaction':
-        if (userData.reactionType) {
+        if (userData.reactionType && typeof Reactions !== 'undefined' && Reactions.send) {
           Reactions.send(userData.reactionType);
         }
         break;
 
       case 'exit':
         exitVR();
-        App.leaveRoom();
+        if (typeof App !== 'undefined' && App.leaveRoom) {
+          App.leaveRoom();
+        }
         break;
     }
   }
 
+  // Idempotent cleanup of VR session state, gaze loops, indicators, and UI panel
   function cleanupVR() {
+    stopGazeInteraction();
+
     if (uiPanel) {
-      const scene = Cinema.getScene();
-      if (scene) scene.remove(uiPanel);
+      if (uiPanel.parent) {
+        uiPanel.parent.remove(uiPanel);
+      }
+      uiPanel.traverse(child => {
+        if (child.geometry && typeof child.geometry.dispose === 'function') {
+          child.geometry.dispose();
+        }
+        if (child.material) {
+          if (child.material.map && typeof child.material.map.dispose === 'function') {
+            child.material.map.dispose();
+          }
+          if (typeof child.material.dispose === 'function') {
+            child.material.dispose();
+          }
+        }
+      });
       uiPanel = null;
     }
-    gazeTarget = null;
-    clearTimeout(gazeDwellTimer);
+
+    if (xrSession) {
+      try {
+        if (sourcesChangeHandler) {
+          xrSession.removeEventListener('inputsourceschange', sourcesChangeHandler);
+        }
+        if (sessionEndHandler) {
+          xrSession.removeEventListener('end', sessionEndHandler);
+        }
+      } catch (_) {}
+    }
+    sourcesChangeHandler = null;
+    sessionEndHandler = null;
+    handSupported = false;
+
+    updatePreflightUI();
   }
 
   return {
@@ -486,10 +732,25 @@ const XR = (() => {
     exitVR,
     setMediaReady,
     updatePreflightUI,
+    refreshInputCapabilities,
+    setupXRInputHandlers,
+    setupGazeInteraction,
+    stopGazeInteraction,
+    cleanupVR,
     isSupported: () => xrSupported,
     isInVR: () => !!xrSession,
+    isHandSupported: () => handSupported,
     isMediaReady: () => mediaReady,
+    getSession: () => xrSession,
+    getGazeCheckInterval: () => gazeCheckInterval,
+    getGazeIndicator: () => gazeIndicator,
+    getUIPanel: () => uiPanel,
   };
 })();
 
-window.XR = XR;
+if (typeof window !== 'undefined') {
+  window.XR = XR;
+}
+if (typeof module !== 'undefined' && module.exports) {
+  module.exports = XR;
+}

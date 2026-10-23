@@ -229,7 +229,13 @@ const Cinema = (() => {
       showMediaError(video.error);
       if (typeof onErrorCallback === 'function') onErrorCallback(video.error);
       if (window.XR && typeof XR.setMediaReady === 'function') {
-        XR.setMediaReady(false);
+        let msg = 'Media Stream Error — Check File / CORS';
+        if (video.error) {
+          if (video.error.code === 2) msg = 'Network Error loading video';
+          else if (video.error.code === 3) msg = 'Video decode / codec error';
+          else if (video.error.code === 4) msg = 'Media format not supported or CORS blocked';
+        }
+        XR.setMediaReady(false, { message: msg, error: video.error });
       }
     };
 
@@ -447,7 +453,13 @@ const Cinema = (() => {
       isMediaReadyState = false;
       if (typeof onError === 'function') onError(video.error);
       if (window.XR && typeof XR.setMediaReady === 'function') {
-        XR.setMediaReady(false);
+        let msg = 'Media Stream Error — Check File / CORS';
+        if (video && video.error) {
+          if (video.error.code === 2) msg = 'Network Error loading video';
+          else if (video.error.code === 3) msg = 'Video decode / codec error';
+          else if (video.error.code === 4) msg = 'Media format not supported or CORS blocked';
+        }
+        XR.setMediaReady(false, { message: msg, error: video ? video.error : null });
       }
     };
 
@@ -707,6 +719,9 @@ const Cinema = (() => {
   }
 
   function destroy() {
+    if (typeof window !== 'undefined' && window.XR && typeof window.XR.cleanupVR === 'function') {
+      window.XR.cleanupVR();
+    }
     window.removeEventListener('resize', onResize);
     onEndedCallback = null;
     isMediaReadyState = false;
