@@ -1657,6 +1657,67 @@ const App = (() => {
     }, { passive: true });
   }
 
+  // ─── Playback Synchronization with Drift Tolerance & Debounce ─
+  const DRIFT_TOLERANCE_SECONDS = 0.45; // 450ms drift tolerance window to prevent decoder thrashing
+  const CORRECTION_DEBOUNCE_MS = 1200;  // Debounce corrective seeks so back-to-back state events don't stutter
+  let lastCorrectiveSeekTime = 0;
+
+  function syncPlaybackState(targetPosition, isPaused, serverTimestamp, forceSeek = false) {
+    if (typeof Cinema === 'undefined') return;
+
+    const currentVideoTime = Cinema.getCurrentTime();
+    let calculatedPosition = typeof targetPosition === 'number' ? targetPosition : 0;
+
+    if (!isPaused && typeof serverTimestamp === 'number' && serverTimestamp > 0) {
+      const networkDrift = Math.max(0, (Date.now() - serverTimestamp) / 1000);
+      calculatedPosition += networkDrift;
+    }
+
+    const drift = Math.abs(calculatedPosition - currentVideoTime);
+
+    // Update Diagnostics metrics
+    if (typeof Diagnostics !== 'undefined' && Diagnostics.isEnabled()) {
+      Diagnostics.updateMetrics({
+        drift: (calculatedPosition - currentVideoTime),
+      });
+    }
+
+    // If target state is paused:
+    if (isPaused) {
+      if (Cinema.isPlaying()) {
+        Cinema.pause();
+      }
+      if (forceSeek || drift > 0.1) {
+        Cinema.seek(calculatedPosition);
+      }
+      return;
+    }
+
+    // Target state is playing:
+    if (!Cinema.isPlaying()) {
+      Cinema.seek(calculatedPosition);
+      Cinema.play();
+      lastCorrectiveSeekTime = Date.now();
+      return;
+    }
+
+    // Both are playing: check if drift exceeds tolerance
+    if (drift > DRIFT_TOLERANCE_SECONDS || forceSeek) {
+      const now = Date.now();
+      if (forceSeek || now - lastCorrectiveSeekTime > CORRECTION_DEBOUNCE_MS) {
+        lastCorrectiveSeekTime = now;
+        if (typeof Diagnostics !== 'undefined' && Diagnostics.isEnabled()) {
+          Diagnostics.log(`[sync] Correcting drift of ${drift.toFixed(3)}s -> seeking to ${calculatedPosition.toFixed(2)}s`);
+        }
+        Cinema.seek(calculatedPosition);
+      } else {
+        if (typeof Diagnostics !== 'undefined' && Diagnostics.isEnabled()) {
+          Diagnostics.log(`[sync] Drift of ${drift.toFixed(3)}s throttled (debouncing corrective seek)`);
+        }
+      }
+    }
+  }
+
   // ─── WebSocket Event Handlers ─────────────────────
 
   function setupWSHandlers() {
@@ -1678,15 +1739,8 @@ const App = (() => {
       if (currentScreen === 'cinema') {
         document.getElementById('cinema-participant-badge').textContent = participants.length;
 
-        // Sync playback
-        if (payload.isPaused) {
-          Cinema.pause();
-          Cinema.seek(payload.position);
-        } else {
-          const drift = (Date.now() - payload.serverTime) / 1000;
-          Cinema.seek(payload.position + drift);
-          Cinema.play();
-        }
+        // Sync playback with drift tolerance & debouncing (no unconditional seek)
+        syncPlaybackState(payload.position, payload.isPaused, payload.serverTime, false);
 
         DirectorsCut.setEnabled(payload.directorCutEnabled);
       }
@@ -1695,19 +1749,16 @@ const App = (() => {
     WS.on('playback', (data) => {
       if (data.participantId === participantId) return; // Don't re-apply own actions
       const payload = data.payload || {};
-      const drift = (Date.now() - payload.serverTime) / 1000;
 
       switch (payload.action) {
         case 'play':
-          Cinema.seek(payload.position + drift);
-          Cinema.play();
+          syncPlaybackState(payload.position, false, payload.serverTime, true);
           break;
         case 'pause':
-          Cinema.pause();
-          Cinema.seek(payload.position);
+          syncPlaybackState(payload.position, true, payload.serverTime, true);
           break;
         case 'seek':
-          Cinema.seek(payload.position);
+          syncPlaybackState(payload.position, Cinema.isPlaying() ? false : true, payload.serverTime, true);
           break;
       }
     });
@@ -2233,14 +2284,26 @@ const App = (() => {
     container.appendChild(toast);
 
     // Trigger transition
-    requestAnimationFrame(() => {
+    if (typeof requestAnimationFrame === 'function') {
+      requestAnimationFrame(() => {
+        if (toast.classList && typeof toast.classList.add === 'function') {
+          toast.classList.add('is-visible');
+        }
+      });
+    } else if (toast.classList && typeof toast.classList.add === 'function') {
       toast.classList.add('is-visible');
-    });
+    }
 
     // Remove after 3.5 seconds
     setTimeout(() => {
-      toast.classList.remove('is-visible');
-      setTimeout(() => toast.remove(), 250);
+      if (toast.classList && typeof toast.classList.remove === 'function') {
+        toast.classList.remove('is-visible');
+      }
+      setTimeout(() => {
+        if (typeof toast.remove === 'function') {
+          toast.remove();
+        }
+      }, 250);
     }, 3500);
   }
 
@@ -2288,14 +2351,27 @@ const App = (() => {
     showConfirmDialog,
     closeConfirmDialog,
     isUserHost: () => isHost,
+    syncPlaybackState,
+    getDriftTolerance: () => DRIFT_TOLERANCE_SECONDS,
   };
 })();
 
 // ─── Bootstrap ──────────────────────────────────────
-if (document.readyState === 'loading') {
-  document.addEventListener('DOMContentLoaded', () => {
-    App.init();
-  });
-} else {
-  App.init();
+if (typeof window !== 'undefined') {
+  window.App = App;
+  // Auto-bootstrap in browser (when not imported via CommonJS module require)
+  if (typeof module === 'undefined' && typeof document !== 'undefined') {
+    if (document.readyState === 'loading') {
+      document.addEventListener('DOMContentLoaded', () => {
+        App.init();
+      });
+    } else {
+      App.init();
+    }
+  }
 }
+if (typeof module !== 'undefined' && module.exports) {
+  module.exports = App;
+}
+
+

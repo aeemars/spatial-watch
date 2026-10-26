@@ -1,6 +1,7 @@
 /* ═══════════════════════════════════════════════════════════
    SPATIAL WATCH — WebXR Module
    Immersive VR session with verified hand tracking & gaze fallback
+   Frame-paced, synchronized within the authoritative render loop
    Optimized for seated Meta Quest use
    ═══════════════════════════════════════════════════════════ */
 
@@ -13,13 +14,27 @@ const XR = (() => {
   let uiPanel = null;
   let gazeTarget = null;
   let gazeDwellTimer = null;
-  let gazeCheckInterval = null;
   let gazeIndicator = null;
+  let gazeActive = false;
+  let lastGazeCheckTimestamp = 0;
   let lastActionTimestamp = 0;
   let sourcesChangeHandler = null;
   let sessionEndHandler = null;
 
+  // Pre-allocated scratch objects to avoid GC pressure in render loop
+  let gazeCenter = null;
+  let gazeRaycaster = null;
+
   const GAZE_DWELL_MS = 800;
+
+  function ensureGazeScratchObjects() {
+    if (!gazeCenter && typeof THREE !== 'undefined' && THREE.Vector2) {
+      gazeCenter = new THREE.Vector2(0, 0);
+    }
+    if (!gazeRaycaster && typeof THREE !== 'undefined' && THREE.Raycaster) {
+      gazeRaycaster = new THREE.Raycaster();
+    }
+  }
 
   function getNavigator() {
     return typeof navigator !== 'undefined' ? navigator : null;
@@ -282,10 +297,6 @@ const XR = (() => {
       const session = await nav.xr.requestSession('immersive-vr', sessionInit);
       xrSession = session;
 
-      if (renderer.xr && typeof renderer.xr.setSession === 'function') {
-        renderer.xr.setSession(xrSession);
-      }
-
       // Attach input listeners directly to the active session immediately
       setupXRInputHandlers(xrSession);
       refreshInputCapabilities();
@@ -298,11 +309,20 @@ const XR = (() => {
       xrSession.addEventListener('inputsourceschange', sourcesChangeHandler);
       xrSession.addEventListener('end', sessionEndHandler);
 
-      // Create VR UI panel
+      // Connect session to Three.js WebXR manager
+      if (renderer.xr && typeof renderer.xr.setSession === 'function') {
+        renderer.xr.setSession(xrSession);
+      }
+
+      // Create VR spatial control panel
       createVRControls();
 
       // Set up gaze fallback
       setupGazeInteraction();
+
+      if (typeof Diagnostics !== 'undefined' && Diagnostics.isEnabled()) {
+        Diagnostics.log('[xr] WebXR immersive-vr session established');
+      }
 
     } catch (e) {
       console.error('[xr] Failed to start VR session:', e);
@@ -316,8 +336,14 @@ const XR = (() => {
   }
 
   function handleSessionEnd() {
+    if (typeof Diagnostics !== 'undefined' && Diagnostics.isEnabled()) {
+      Diagnostics.log('[xr] WebXR session ended, restoring desktop rendering');
+    }
     xrSession = null;
     cleanupVR();
+    if (typeof Cinema !== 'undefined' && typeof Cinema.onVREnd === 'function') {
+      Cinema.onVREnd();
+    }
   }
 
   // Exit VR session
@@ -332,13 +358,17 @@ const XR = (() => {
       }
     }
     cleanupVR();
+    if (typeof Cinema !== 'undefined' && typeof Cinema.onVREnd === 'function') {
+      Cinema.onVREnd();
+    }
   }
 
   // Attach input handlers directly to newly created XR session
   function setupXRInputHandlers(session) {
     if (!session || typeof session.addEventListener !== 'function') return;
 
-    const raycaster = (typeof THREE !== 'undefined' && THREE.Raycaster) ? new THREE.Raycaster() : null;
+    ensureGazeScratchObjects();
+    const raycaster = gazeRaycaster;
 
     const onSelectStart = (event) => {
       const now = Date.now();
@@ -469,15 +499,19 @@ const XR = (() => {
 
   // Handle VR button selection via pinch or squeeze
   function handleVRSelect(raycaster, event) {
-    if (!uiPanel || !raycaster) return;
+    if (!uiPanel) return;
 
     const camera = (typeof Cinema !== 'undefined' && Cinema.getCamera) ? Cinema.getCamera() : null;
     const scene = (typeof Cinema !== 'undefined' && Cinema.getScene) ? Cinema.getScene() : null;
     if (!camera || !scene) return;
 
+    ensureGazeScratchObjects();
+    const rc = raycaster || gazeRaycaster;
+    if (!rc || !gazeCenter) return;
+
     // Standard Quest seated gaze-pinch interaction: raycast along camera forward vector (0, 0)
-    raycaster.setFromCamera(new THREE.Vector2(0, 0), camera);
-    const intersects = raycaster.intersectObjects(uiPanel.children, false);
+    rc.setFromCamera(gazeCenter, camera);
+    const intersects = rc.intersectObjects(uiPanel.children, false);
 
     if (intersects.length > 0) {
       const hit = intersects[0].object;
@@ -499,10 +533,7 @@ const XR = (() => {
 
   // Stop gaze interaction loop and dispose of indicator objects
   function stopGazeInteraction() {
-    if (gazeCheckInterval) {
-      clearInterval(gazeCheckInterval);
-      gazeCheckInterval = null;
-    }
+    gazeActive = false;
 
     if (gazeDwellTimer) {
       clearTimeout(gazeDwellTimer);
@@ -524,15 +555,15 @@ const XR = (() => {
     }
   }
 
-  // Set up gaze interaction as fallback
+  // Set up gaze interaction as fallback inside the authoritative render loop
   function setupGazeInteraction() {
-    // Clear any existing gaze interval, timer, and indicators first
     stopGazeInteraction();
 
     const renderer = (typeof Cinema !== 'undefined' && Cinema.getRenderer) ? Cinema.getRenderer() : null;
     if (!renderer || typeof THREE === 'undefined') return;
 
-    const raycaster = new THREE.Raycaster();
+    ensureGazeScratchObjects();
+
     const gazeIndicatorGeo = new THREE.RingGeometry(0.005, 0.008, 32);
     const gazeIndicatorMat = new THREE.MeshBasicMaterial({
       color: 0xe7bc72,
@@ -546,51 +577,60 @@ const XR = (() => {
     const camera = (typeof Cinema !== 'undefined' && Cinema.getCamera) ? Cinema.getCamera() : null;
     if (camera) camera.add(gazeIndicator);
 
-    function gazeCheck() {
-      if (!xrSession || !uiPanel) return;
+    gazeActive = true;
+  }
 
-      const currentCamera = (typeof Cinema !== 'undefined' && Cinema.getCamera) ? Cinema.getCamera() : null;
-      if (!currentCamera) return;
+  // Synchronous WebXR gaze check running inside the authoritative render frame (no setInterval)
+  function onRenderTick(timestamp, frame) {
+    if (!xrSession || !uiPanel || !gazeActive) return;
 
-      raycaster.setFromCamera(new THREE.Vector2(0, 0), currentCamera);
-      const intersects = raycaster.intersectObjects(uiPanel.children, false);
+    // Throttle raycasting check to ~60ms intervals to keep render frame lightweight
+    const now = typeof timestamp === 'number' ? timestamp : ((typeof performance !== 'undefined') ? performance.now() : Date.now());
+    if (now - lastGazeCheckTimestamp < 60) return;
+    lastGazeCheckTimestamp = now;
 
-      if (intersects.length > 0) {
-        const hit = intersects[0].object;
-        if (hit.userData && hit.userData.isButton) {
-          if (gazeTarget !== hit) {
-            gazeTarget = hit;
-            if (gazeDwellTimer) clearTimeout(gazeDwellTimer);
+    const currentCamera = (typeof Cinema !== 'undefined' && Cinema.getCamera) ? Cinema.getCamera() : null;
+    if (!currentCamera) return;
 
-            // Start dwell timer
-            gazeDwellTimer = setTimeout(() => {
-              executeVRAction(hit.userData);
-              // Feedback pulse
-              if (hit.scale) {
-                const scale = hit.scale.clone();
-                hit.scale.multiplyScalar(0.9);
-                setTimeout(() => {
-                  if (hit.scale) hit.scale.copy(scale);
-                }, 150);
-              }
-              gazeTarget = null;
-            }, GAZE_DWELL_MS);
-          }
-          return;
+    ensureGazeScratchObjects();
+    if (!gazeRaycaster || !gazeCenter) return;
+
+    gazeRaycaster.setFromCamera(gazeCenter, currentCamera);
+    const intersects = gazeRaycaster.intersectObjects(uiPanel.children, false);
+
+    if (intersects.length > 0) {
+      const hit = intersects[0].object;
+      if (hit.userData && hit.userData.isButton) {
+        if (gazeTarget !== hit) {
+          gazeTarget = hit;
+          if (gazeDwellTimer) clearTimeout(gazeDwellTimer);
+
+          // Start dwell timer
+          gazeDwellTimer = setTimeout(() => {
+            executeVRAction(hit.userData);
+            // Feedback pulse
+            if (hit.scale) {
+              const scale = hit.scale.clone();
+              hit.scale.multiplyScalar(0.9);
+              setTimeout(() => {
+                if (hit.scale) hit.scale.copy(scale);
+              }, 150);
+            }
+            gazeTarget = null;
+          }, GAZE_DWELL_MS);
         }
-      }
-
-      // Reset gaze if looking away
-      if (gazeTarget) {
-        gazeTarget = null;
-        if (gazeDwellTimer) {
-          clearTimeout(gazeDwellTimer);
-          gazeDwellTimer = null;
-        }
+        return;
       }
     }
 
-    gazeCheckInterval = setInterval(gazeCheck, 100);
+    // Reset gaze if looking away
+    if (gazeTarget) {
+      gazeTarget = null;
+      if (gazeDwellTimer) {
+        clearTimeout(gazeDwellTimer);
+        gazeDwellTimer = null;
+      }
+    }
   }
 
   // Execute a VR control action with server-side host authorization preservation
@@ -736,13 +776,14 @@ const XR = (() => {
     setupXRInputHandlers,
     setupGazeInteraction,
     stopGazeInteraction,
+    onRenderTick,
     cleanupVR,
     isSupported: () => xrSupported,
     isInVR: () => !!xrSession,
     isHandSupported: () => handSupported,
     isMediaReady: () => mediaReady,
     getSession: () => xrSession,
-    getGazeCheckInterval: () => gazeCheckInterval,
+    getGazeCheckInterval: () => (gazeActive ? 1 : null),
     getGazeIndicator: () => gazeIndicator,
     getUIPanel: () => uiPanel,
   };

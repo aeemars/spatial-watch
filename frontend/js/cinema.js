@@ -1,7 +1,7 @@
 /* ═══════════════════════════════════════════════════════════
    SPATIAL WATCH — Cinema Scene
    Three.js-based virtual cinema with desktop fallback
-   Lightweight geometry for standalone VR hardware
+   Frame-paced, lightweight rendering for standalone VR hardware
    ═══════════════════════════════════════════════════════════ */
 
 const Cinema = (() => {
@@ -10,8 +10,21 @@ const Cinema = (() => {
   let canvas = null;
   let isPlaying = false;
   let isHost = false;
-  let animFrameId = null;
   let currentMediaUrl = null; // Track canonical media URL across preload/init
+
+  // Frame pacing & video texture dirty tracking
+  let isVideoTextureDirty = false;
+  let hasVideoFrameCallbackSupport = false;
+  let videoFrameCallbackId = null;
+  let lastFallbackVideoTime = -1;
+  let presentedFramesCount = 0;
+
+  // Render loop diagnostics & timing
+  let lastFrameTimestamp = 0;
+  let frameCount = 0;
+  let currentFPS = 0;
+  let currentFrameTimeMs = 0;
+  let lastFpsCalcTime = 0;
 
   // Blob & Cache Management for instant seeking and zero-buffering playback
   const blobUrlCache = new Map(); // canonicalUrl -> blobUrl
@@ -52,9 +65,9 @@ const Cinema = (() => {
     const downloadPromise = (async () => {
       try {
         // 3. Check persistent CacheStorage API
-        if ('caches' in window) {
+        if (typeof window !== 'undefined' && window.caches && typeof window.caches.open === 'function') {
           try {
-            const cache = await caches.open(CACHE_NAME);
+            const cache = await window.caches.open(CACHE_NAME);
             const cachedResponse = await cache.match(canonical);
             if (cachedResponse) {
               const blob = await cachedResponse.blob();
@@ -107,9 +120,9 @@ const Cinema = (() => {
         }
 
         // 5. Store response in persistent CacheStorage
-        if ('caches' in window && blob && blob.size > 0) {
+        if (typeof window !== 'undefined' && window.caches && typeof window.caches.open === 'function' && blob && blob.size > 0) {
           try {
-            const cache = await caches.open(CACHE_NAME);
+            const cache = await window.caches.open(CACHE_NAME);
             const cacheResponse = new Response(blob, {
               headers: {
                 'Content-Type': contentType,
@@ -129,7 +142,6 @@ const Cinema = (() => {
         return blobUrl;
       } catch (err) {
         console.warn('[cinema] Blob prefetch error, falling back to direct stream:', err);
-        // Fallback to original URL so playback is never blocked
         return mediaUrl;
       } finally {
         activeDownloads.delete(canonical);
@@ -141,6 +153,7 @@ const Cinema = (() => {
   }
 
   function showBuffering(text, percent) {
+    if (typeof document === 'undefined') return;
     const overlay = document.getElementById('cinema-buffering-overlay');
     const textEl = document.getElementById('cinema-buffering-text');
     const pctEl = document.getElementById('cinema-buffering-percent');
@@ -157,6 +170,7 @@ const Cinema = (() => {
   }
 
   function hideBuffering() {
+    if (typeof document === 'undefined') return;
     const overlay = document.getElementById('cinema-buffering-overlay');
     if (overlay) overlay.hidden = true;
   }
@@ -190,10 +204,62 @@ const Cinema = (() => {
     }
   }
 
+  // Register frame-driven update via HTMLVideoElement.requestVideoFrameCallback
+  function registerVideoFrameCallback() {
+    if (!video || typeof video.requestVideoFrameCallback !== 'function') return;
+    if (videoFrameCallbackId !== null) return;
+
+    function handleVideoFrame(now, metadata) {
+      videoFrameCallbackId = null;
+      isVideoTextureDirty = true;
+      if (metadata && typeof metadata.presentedFrames === 'number') {
+        presentedFramesCount = metadata.presentedFrames;
+      } else {
+        presentedFramesCount++;
+      }
+
+      // Re-schedule for next presented frame
+      if (video && typeof video.requestVideoFrameCallback === 'function') {
+        videoFrameCallbackId = video.requestVideoFrameCallback(handleVideoFrame);
+      }
+    }
+
+    videoFrameCallbackId = video.requestVideoFrameCallback(handleVideoFrame);
+  }
+
+  function unregisterVideoFrameCallback() {
+    if (video && videoFrameCallbackId !== null && typeof video.cancelVideoFrameCallback === 'function') {
+      video.cancelVideoFrameCallback(videoFrameCallbackId);
+      videoFrameCallbackId = null;
+    }
+  }
+
+  function getDroppedFrames() {
+    if (video && typeof video.getVideoPlaybackQuality === 'function') {
+      const q = video.getVideoPlaybackQuality();
+      return q ? (q.droppedVideoFrames || 0) : 0;
+    }
+    if (video && typeof video.webkitDroppedFrameCount === 'number') {
+      return video.webkitDroppedFrameCount;
+    }
+    return 0;
+  }
+
+  function updateRendererPixelRatio() {
+    if (!renderer || typeof window === 'undefined') return;
+    const isVR = Boolean(renderer.xr && renderer.xr.isPresenting);
+    // Headset display resolution is high; cap DPR to 1.0 in VR for rock-solid 72/90/120 Hz
+    // Desktop is capped at 1.5 to prevent high-DPI GPU fill-rate stalls
+    const targetDPR = isVR ? 1.0 : Math.min(window.devicePixelRatio || 1, 1.5);
+    renderer.setPixelRatio(targetDPR);
+  }
+
   function init(mediaUrl, hostStatus, onReadyCallback, onErrorCallback) {
     isHost = hostStatus;
-    canvas = document.getElementById('cinema-canvas');
-    video = document.getElementById('cinema-video');
+    if (typeof document !== 'undefined') {
+      canvas = document.getElementById('cinema-canvas');
+      video = document.getElementById('cinema-video');
+    }
 
     if (!canvas || !video) return;
 
@@ -201,10 +267,17 @@ const Cinema = (() => {
     hideMediaError();
     hideBuffering();
 
-    // Set up video with CORS and lifecycle hooks
+    // Set up video with CORS, inline playback, and auto preload
     video.crossOrigin = 'anonymous';
     video.preload = 'auto';
+    video.playsInline = true;
     video.loop = false;
+
+    // Check requestVideoFrameCallback support
+    hasVideoFrameCallbackSupport = typeof video.requestVideoFrameCallback === 'function';
+    if (typeof Diagnostics !== 'undefined' && Diagnostics.isEnabled()) {
+      Diagnostics.log(`[cinema] requestVideoFrameCallback support: ${hasVideoFrameCallbackSupport}`);
+    }
 
     video.onloadedmetadata = () => {
       isMediaReadyState = true;
@@ -214,17 +287,20 @@ const Cinema = (() => {
       if (window.XR && typeof XR.setMediaReady === 'function') {
         XR.setMediaReady(true, { duration: video.duration });
       }
+      isVideoTextureDirty = true;
     };
 
     video.onended = () => {
       isPlaying = false;
       updatePlayPauseIcon(false);
+      unregisterVideoFrameCallback();
       if (typeof onEndedCallback === 'function') onEndedCallback();
     };
 
     video.onerror = (e) => {
       isMediaReadyState = false;
       hideBuffering();
+      unregisterVideoFrameCallback();
       console.warn('[cinema] video load error:', video.error);
       showMediaError(video.error);
       if (typeof onErrorCallback === 'function') onErrorCallback(video.error);
@@ -245,18 +321,25 @@ const Cinema = (() => {
     };
     video.oncanplay = () => {
       hideBuffering();
+      isVideoTextureDirty = true;
     };
     video.onplaying = () => {
       hideBuffering();
+      registerVideoFrameCallback();
+    };
+    video.onpause = () => {
+      unregisterVideoFrameCallback();
+      isVideoTextureDirty = true;
     };
     video.onseeking = () => {
       if (video.readyState < 3) {
         showBuffering('Seeking…');
       }
+      isVideoTextureDirty = true;
     };
     video.onseeked = () => {
       hideBuffering();
-      if (videoTexture) videoTexture.needsUpdate = true;
+      isVideoTextureDirty = true;
     };
 
     // Normalize URL for comparison
@@ -271,7 +354,6 @@ const Cinema = (() => {
       video.src = cachedBlob;
       video.load();
     } else if (currentMediaUrl === canonical && video.readyState >= 1) {
-      // Already has metadata from preload
       isMediaReadyState = true;
       hideBuffering();
       updateScreenDimensions();
@@ -282,12 +364,10 @@ const Cinema = (() => {
     } else {
       currentMediaUrl = canonical;
       isMediaReadyState = false;
-      // Immediately bind the media URL so browser Range streaming starts with zero delay
       video.src = mediaUrl;
       video.load();
       showBuffering('Connecting screening stream…', 0);
 
-      // In parallel, buffer into CacheStorage for smooth looping & instant seeking
       getOrFetchMediaBlobUrl(mediaUrl, (pct) => {
         if (!isMediaReadyState) {
           showBuffering('Buffering screening for zero-lag playback…', pct);
@@ -303,41 +383,47 @@ const Cinema = (() => {
       throw new Error('3D Cinema engine (Three.js) is not available');
     }
 
-    video.loop = false;
-
     scene = new THREE.Scene();
     scene.background = new THREE.Color(0x050710);
 
     // Camera — seated VR position
-    camera = new THREE.PerspectiveCamera(70, window.innerWidth / window.innerHeight, 0.1, 100);
+    const aspect = typeof window !== 'undefined' ? (window.innerWidth / window.innerHeight) : (16 / 9);
+    camera = new THREE.PerspectiveCamera(70, aspect, 0.1, 100);
     camera.position.set(0, 0, 2);
 
-    // Renderer
+    // Renderer configured for Quest-friendly performance
     renderer = new THREE.WebGLRenderer({
       canvas,
       antialias: true,
       alpha: false,
+      powerPreference: 'high-performance',
     });
-    renderer.setSize(window.innerWidth, window.innerHeight);
-    renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+    if (typeof window !== 'undefined') {
+      renderer.setSize(window.innerWidth, window.innerHeight);
+    }
+    updateRendererPixelRatio();
     renderer.xr.enabled = true;
 
-    // Build the theater
+    // Build the theater geometry and video screen
     buildTheater();
-
-    // Create video screen
     createVideoScreen();
-
-    // Lighting
     addLighting();
 
-    // Handle resize
-    window.addEventListener('resize', onResize);
+    // Listen to resize
+    if (typeof window !== 'undefined') {
+      window.addEventListener('resize', onResize);
+    }
 
-    // Start render loop
+    // Start single authoritative render loop
+    lastFrameTimestamp = (typeof performance !== 'undefined') ? performance.now() : Date.now();
+    lastFpsCalcTime = lastFrameTimestamp;
     renderer.setAnimationLoop(animate);
 
-    // Desktop mouse look
+    if (typeof Diagnostics !== 'undefined' && Diagnostics.isEnabled()) {
+      Diagnostics.log('[cinema] Authoritative render loop started');
+    }
+
+    // Desktop mouse look controls
     if (!renderer.xr.isPresenting) {
       initDesktopControls();
     }
@@ -403,14 +489,18 @@ const Cinema = (() => {
   }
 
   function createVideoScreen() {
-    // Video texture
+    if (videoTexture) {
+      videoTexture.dispose();
+      videoTexture = null;
+    }
+
     videoTexture = new THREE.VideoTexture(video);
     videoTexture.minFilter = THREE.LinearFilter;
     videoTexture.magFilter = THREE.LinearFilter;
+    videoTexture.generateMipmaps = false;
 
-    // Screen mesh (dynamic aspect ratio based on video metadata)
     let aspect = 16 / 9;
-    if (video.videoWidth && video.videoHeight) {
+    if (video && video.videoWidth && video.videoHeight) {
       aspect = video.videoWidth / video.videoHeight;
     }
     const width = 9;
@@ -423,6 +513,10 @@ const Cinema = (() => {
     videoMesh = new THREE.Mesh(screenGeo, screenMat);
     videoMesh.position.set(0, 1.5, -7.05);
     scene.add(videoMesh);
+
+    if (typeof Diagnostics !== 'undefined' && Diagnostics.isEnabled()) {
+      Diagnostics.log('[cinema] VideoTexture and screen mesh initialized');
+    }
   }
 
   function updateScreenDimensions() {
@@ -435,11 +529,14 @@ const Cinema = (() => {
   }
 
   function preloadMedia(mediaUrl, onReady, onError, onProgress) {
-    video = document.getElementById('cinema-video');
+    if (typeof document !== 'undefined') {
+      video = document.getElementById('cinema-video');
+    }
     if (!video || !mediaUrl) return;
 
     video.crossOrigin = 'anonymous';
     video.preload = 'auto';
+    video.playsInline = true;
 
     const handleLoadedMetadata = () => {
       isMediaReadyState = true;
@@ -451,7 +548,7 @@ const Cinema = (() => {
 
     const handleError = () => {
       isMediaReadyState = false;
-      if (typeof onError === 'function') onError(video.error);
+      if (typeof onError === 'function') onError(video ? video.error : null);
       if (window.XR && typeof XR.setMediaReady === 'function') {
         let msg = 'Media Stream Error — Check File / CORS';
         if (video && video.error) {
@@ -498,6 +595,7 @@ const Cinema = (() => {
   }
 
   function showMediaError(errorDetails) {
+    if (typeof document === 'undefined') return;
     const overlay = document.getElementById('cinema-error-overlay');
     const msgEl = document.getElementById('cinema-error-message');
     const guidanceEl = document.getElementById('cinema-error-guidance');
@@ -531,21 +629,19 @@ const Cinema = (() => {
   }
 
   function hideMediaError() {
+    if (typeof document === 'undefined') return;
     const overlay = document.getElementById('cinema-error-overlay');
     if (overlay) overlay.hidden = true;
   }
 
   function addLighting() {
-    // Warm ambient
     const ambient = new THREE.AmbientLight(0x1a1520, 0.3);
     scene.add(ambient);
 
-    // Screen glow light
     const screenLight = new THREE.PointLight(0x8fa5d0, 0.8, 15);
     screenLight.position.set(0, 1.5, -5);
     scene.add(screenLight);
 
-    // Warm accent lights (theater sconces)
     const goldLight1 = new THREE.PointLight(0xe7bc72, 0.15, 8);
     goldLight1.position.set(-8, 3, -3);
     scene.add(goldLight1);
@@ -554,7 +650,6 @@ const Cinema = (() => {
     goldLight2.position.set(8, 3, -3);
     scene.add(goldLight2);
 
-    // Subtle violet accent
     const violetLight = new THREE.PointLight(0x8f85d7, 0.05, 12);
     violetLight.position.set(0, 6, -4);
     scene.add(violetLight);
@@ -565,7 +660,6 @@ const Cinema = (() => {
 
     const pos = SEAT_POSITIONS[seatIndex];
 
-    // Simple glowing sphere marker
     const markerGeo = new THREE.SphereGeometry(0.2, 12, 12);
     const markerMat = new THREE.MeshStandardMaterial({
       color: 0xe7bc72,
@@ -578,87 +672,174 @@ const Cinema = (() => {
     marker.position.set(pos.x, pos.y + 0.8, pos.z);
     scene.add(marker);
 
-    // Name label using a canvas texture
-    const labelCanvas = document.createElement('canvas');
-    labelCanvas.width = 256;
-    labelCanvas.height = 64;
-    const ctx = labelCanvas.getContext('2d');
-    if (ctx.roundRect) {
-      ctx.roundRect(0, 0, 256, 64, 10);
+    if (typeof document !== 'undefined') {
+      const labelCanvas = document.createElement('canvas');
+      labelCanvas.width = 256;
+      labelCanvas.height = 64;
+      const ctx = labelCanvas.getContext('2d');
+      if (ctx.roundRect) {
+        ctx.roundRect(0, 0, 256, 64, 10);
+      } else {
+        ctx.rect(0, 0, 256, 64);
+      }
+      ctx.fillStyle = '#F4F1EA';
+      ctx.font = '500 24px Inter, sans-serif';
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillText(displayName.substring(0, 14), 128, 32);
+
+      const labelTexture = new THREE.CanvasTexture(labelCanvas);
+      const labelGeo = new THREE.PlaneGeometry(1.2, 0.3);
+      const labelMat = new THREE.MeshBasicMaterial({
+        map: labelTexture,
+        transparent: true,
+      });
+      const label = new THREE.Mesh(labelGeo, labelMat);
+      label.position.set(pos.x, pos.y + 1.3, pos.z);
+      scene.add(label);
+
+      seatMarkers[participantId] = { marker, label };
     } else {
-      ctx.rect(0, 0, 256, 64);
+      seatMarkers[participantId] = { marker, label: null };
     }
-    ctx.fillStyle = '#F4F1EA';
-    ctx.font = '500 24px Inter, sans-serif';
-    ctx.textAlign = 'center';
-    ctx.textBaseline = 'middle';
-    ctx.fillText(displayName.substring(0, 14), 128, 32);
-
-    const labelTexture = new THREE.CanvasTexture(labelCanvas);
-    const labelGeo = new THREE.PlaneGeometry(1.2, 0.3);
-    const labelMat = new THREE.MeshBasicMaterial({
-      map: labelTexture,
-      transparent: true,
-    });
-    const label = new THREE.Mesh(labelGeo, labelMat);
-    label.position.set(pos.x, pos.y + 1.3, pos.z);
-    scene.add(label);
-
-    seatMarkers[participantId] = { marker, label };
   }
 
   function removeSeatMarker(participantId) {
     const entry = seatMarkers[participantId];
     if (!entry) return;
-    scene.remove(entry.marker);
-    scene.remove(entry.label);
-    entry.marker.geometry.dispose();
-    entry.marker.material.dispose();
-    entry.label.geometry.dispose();
-    entry.label.material.dispose();
+    if (scene) {
+      if (entry.marker) scene.remove(entry.marker);
+      if (entry.label) scene.remove(entry.label);
+    }
+    if (entry.marker) {
+      if (entry.marker.geometry) entry.marker.geometry.dispose();
+      if (entry.marker.material) entry.marker.material.dispose();
+    }
+    if (entry.label) {
+      if (entry.label.geometry) entry.label.geometry.dispose();
+      if (entry.label.material) {
+        if (entry.label.material.map) entry.label.material.map.dispose();
+        entry.label.material.dispose();
+      }
+    }
     delete seatMarkers[participantId];
   }
 
+  let desktopControlsActive = false;
+  let isDragging = false;
+  let prevX = 0, prevY = 0;
+  let rotX = 0, rotY = 0;
+
   function initDesktopControls() {
-    let isDragging = false;
-    let prevX = 0, prevY = 0;
-    let rotX = 0, rotY = 0;
+    if (desktopControlsActive || !canvas || typeof window === 'undefined') return;
+    desktopControlsActive = true;
 
-    canvas.addEventListener('mousedown', (e) => {
-      isDragging = true;
-      prevX = e.clientX;
-      prevY = e.clientY;
-    });
-
-    window.addEventListener('mousemove', (e) => {
-      if (!isDragging) return;
-      const dx = e.clientX - prevX;
-      const dy = e.clientY - prevY;
-      rotY -= dx * 0.003;
-      rotX -= dy * 0.003;
-      rotX = Math.max(-Math.PI / 4, Math.min(Math.PI / 4, rotX));
-      camera.rotation.set(rotX, rotY, 0);
-      prevX = e.clientX;
-      prevY = e.clientY;
-    });
-
-    window.addEventListener('mouseup', () => {
-      isDragging = false;
-    });
+    canvas.addEventListener('mousedown', onMouseDown);
+    window.addEventListener('mousemove', onMouseMove);
+    window.addEventListener('mouseup', onMouseUp);
   }
 
-  function animate() {
-    if (videoTexture && video && (!video.paused || video.seeking)) {
-      videoTexture.needsUpdate = true;
+  function removeDesktopControls() {
+    if (!desktopControlsActive || typeof window === 'undefined') return;
+    desktopControlsActive = false;
+    isDragging = false;
+    if (canvas) canvas.removeEventListener('mousedown', onMouseDown);
+    window.removeEventListener('mousemove', onMouseMove);
+    window.removeEventListener('mouseup', onMouseUp);
+  }
+
+  function onMouseDown(e) {
+    isDragging = true;
+    prevX = e.clientX;
+    prevY = e.clientY;
+  }
+
+  function onMouseMove(e) {
+    if (!isDragging || !camera) return;
+    const dx = e.clientX - prevX;
+    const dy = e.clientY - prevY;
+    rotY -= dx * 0.003;
+    rotX -= dy * 0.003;
+    rotX = Math.max(-Math.PI / 4, Math.min(Math.PI / 4, rotX));
+    camera.rotation.set(rotX, rotY, 0);
+    prevX = e.clientX;
+    prevY = e.clientY;
+  }
+
+  function onMouseUp() {
+    isDragging = false;
+  }
+
+  // Authoritative render loop (setAnimationLoop)
+  // Zero allocations in the render path to maintain fixed frame rates without GC judder
+  function animate(timestamp, frame) {
+    if (!renderer || !scene || !camera) return;
+
+    // 1. Frame-driven video texture dirty check
+    if (hasVideoFrameCallbackSupport) {
+      if (isVideoTextureDirty && videoTexture) {
+        videoTexture.needsUpdate = true;
+        isVideoTextureDirty = false;
+      }
+    } else {
+      // Safe fallback when requestVideoFrameCallback is unsupported
+      if (video && (!video.paused || video.seeking)) {
+        const curTime = video.currentTime;
+        if (curTime !== lastFallbackVideoTime || video.seeking) {
+          lastFallbackVideoTime = curTime;
+          if (videoTexture) videoTexture.needsUpdate = true;
+          presentedFramesCount++;
+        }
+      }
     }
+
+    // 2. Synchronous WebXR interaction tick (no detached setInterval)
+    const isVR = Boolean(renderer.xr && renderer.xr.isPresenting);
+    if (isVR && window.XR && typeof XR.onRenderTick === 'function') {
+      XR.onRenderTick(timestamp, frame);
+    }
+
+    // 3. Render scene to canvas/headset display
     renderer.render(scene, camera);
+
+    // 4. Lightweight Diagnostics Calculation (every 500ms)
+    const now = (typeof performance !== 'undefined') ? performance.now() : Date.now();
+    frameCount++;
+    const elapsedSinceLastCalc = now - lastFpsCalcTime;
+    if (elapsedSinceLastCalc >= 500) {
+      currentFPS = Math.round((frameCount * 1000) / elapsedSinceLastCalc);
+      currentFrameTimeMs = (now - lastFrameTimestamp);
+      frameCount = 0;
+      lastFpsCalcTime = now;
+
+      if (typeof Diagnostics !== 'undefined' && Diagnostics.isEnabled()) {
+        Diagnostics.updateMetrics({
+          fps: currentFPS,
+          frameTimeMs: currentFrameTimeMs,
+          presentedFrames: presentedFramesCount,
+          droppedFrames: getDroppedFrames(),
+          videoTime: video ? video.currentTime : 0,
+          isVR,
+          hasVFC: hasVideoFrameCallbackSupport,
+        });
+      }
+    }
+    lastFrameTimestamp = now;
   }
 
   function onResize() {
-    if (!camera || !renderer) return;
+    if (!camera || !renderer || typeof window === 'undefined') return;
     camera.aspect = window.innerWidth / window.innerHeight;
     camera.updateProjectionMatrix();
     renderer.setSize(window.innerWidth, window.innerHeight);
+    updateRendererPixelRatio();
+  }
+
+  function onVREnd() {
+    updateRendererPixelRatio();
+    if (!desktopControlsActive) {
+      initDesktopControls();
+    }
   }
 
   // Playback controls
@@ -667,6 +848,7 @@ const Cinema = (() => {
     video.play().catch(e => console.warn('[cinema] play failed:', e));
     isPlaying = true;
     updatePlayPauseIcon(true);
+    registerVideoFrameCallback();
   }
 
   function pause() {
@@ -674,11 +856,14 @@ const Cinema = (() => {
     video.pause();
     isPlaying = false;
     updatePlayPauseIcon(false);
+    unregisterVideoFrameCallback();
+    isVideoTextureDirty = true;
   }
 
   function seek(time) {
     if (!video) return;
     video.currentTime = Math.max(0, Math.min(time, video.duration || 0));
+    isVideoTextureDirty = true;
     if (videoTexture) videoTexture.needsUpdate = true;
   }
 
@@ -692,11 +877,14 @@ const Cinema = (() => {
 
   function setSource(url) {
     if (!video) return;
+    unregisterVideoFrameCallback();
     video.src = url;
     video.load();
+    isVideoTextureDirty = true;
   }
 
   function updatePlayPauseIcon(playing) {
+    if (typeof document === 'undefined') return;
     const iconPlay = document.querySelector('.icon-play');
     const iconPause = document.querySelector('.icon-pause');
     if (iconPlay) iconPlay.style.display = playing ? 'none' : 'block';
@@ -719,15 +907,27 @@ const Cinema = (() => {
   }
 
   function destroy() {
+    if (typeof Diagnostics !== 'undefined' && Diagnostics.isEnabled()) {
+      Diagnostics.log('[cinema] Cleaning up and disposing cinema scene');
+    }
+
     if (typeof window !== 'undefined' && window.XR && typeof window.XR.cleanupVR === 'function') {
       window.XR.cleanupVR();
     }
-    window.removeEventListener('resize', onResize);
+
+    unregisterVideoFrameCallback();
+    removeDesktopControls();
+
+    if (typeof window !== 'undefined') {
+      window.removeEventListener('resize', onResize);
+    }
+
     onEndedCallback = null;
     isMediaReadyState = false;
     currentMediaUrl = null;
     hideBuffering();
     hideMediaError();
+
     if (video) {
       video.pause();
       video.removeAttribute('src');
@@ -738,14 +938,27 @@ const Cinema = (() => {
       video.onwaiting = null;
       video.oncanplay = null;
       video.onplaying = null;
+      video.onpause = null;
       video.onseeking = null;
       video.onseeked = null;
     }
+
     if (renderer) {
       renderer.setAnimationLoop(null);
       renderer.dispose();
+      renderer = null;
     }
-    if (videoTexture) videoTexture.dispose();
+
+    if (videoTexture) {
+      videoTexture.dispose();
+      videoTexture = null;
+    }
+
+    if (videoMesh && videoMesh.geometry) {
+      videoMesh.geometry.dispose();
+      videoMesh = null;
+    }
+
     // Clean up seat markers
     Object.keys(seatMarkers).forEach(removeSeatMarker);
   }
@@ -772,8 +985,19 @@ const Cinema = (() => {
     getCachedBlobUrl,
     seedMediaBlob,
     onEnded: (cb) => { onEndedCallback = cb; },
+    onVREnd,
     getVideo: () => video,
     isPlaying: () => isPlaying,
     isMediaReady: () => isMediaReadyState,
+    getPresentedFramesCount: () => presentedFramesCount,
+    hasVideoFrameCallback: () => hasVideoFrameCallbackSupport,
+    markTextureDirty: () => { isVideoTextureDirty = true; },
   };
 })();
+
+if (typeof window !== 'undefined') {
+  window.Cinema = Cinema;
+}
+if (typeof module !== 'undefined' && module.exports) {
+  module.exports = Cinema;
+}
