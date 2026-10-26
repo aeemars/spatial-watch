@@ -1104,14 +1104,14 @@ func (h *Handler) PresignUpload(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Validate file size (max 500MB = 524,288,000 bytes)
-	const maxFileSize = 500 * 1024 * 1024
+	// Validate file size (max 2GB = 2,147,483,648 bytes — R2 supports up to 5GB for single PUTs)
+	const maxFileSize = 2 * 1024 * 1024 * 1024
 	if req.FileSize <= 0 {
 		respondError(w, http.StatusBadRequest, "File size must be greater than zero")
 		return
 	}
 	if req.FileSize > maxFileSize {
-		respondError(w, http.StatusBadRequest, "File exceeds maximum allowed size of 500MB")
+		respondError(w, http.StatusBadRequest, "File exceeds maximum allowed size of 2GB")
 		return
 	}
 
@@ -1136,7 +1136,9 @@ func (h *Handler) PresignUpload(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	res, err := h.Storage.PresignPut(r.Context(), key, cType, req.FileSize, 15*time.Minute)
+	// 60-minute presign window: a 1-hour video at 2 Mbps upload takes ~40 minutes;
+	// 15 minutes was too short and caused R2 to reject the in-flight PUT with 403 Forbidden.
+	res, err := h.Storage.PresignPut(r.Context(), key, cType, req.FileSize, 60*time.Minute)
 	if err != nil {
 		log.Printf("[api] failed to generate presigned upload URL: %v", err)
 		respondError(w, http.StatusInternalServerError, "Failed to generate presigned upload URL")
@@ -1154,8 +1156,8 @@ func (h *Handler) MockUpload(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// 2. Limit upload body size to 500MB
-	r.Body = http.MaxBytesReader(w, r.Body, 500*1024*1024)
+	// 2. Limit upload body size to 2GB (mirrors PresignUpload handler cap)
+	r.Body = http.MaxBytesReader(w, r.Body, 2*1024*1024*1024)
 
 	// 3. Check expiration timestamp if provided
 	if expStr := r.URL.Query().Get("expires"); expStr != "" {

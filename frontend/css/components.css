@@ -1744,6 +1744,9 @@
 .cinema-error__actions {
   margin-top: var(--space-2);
   width: 100%;
+  display: flex;
+  gap: var(--space-3);
+  justify-content: center;
 }
 
 /* ────────────────────────────────────────────────────────

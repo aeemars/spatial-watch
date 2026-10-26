@@ -17,7 +17,21 @@ const API = (() => {
     };
     if (body !== undefined) opts.body = JSON.stringify(body);
 
-    const res = await fetch(`${BASE}${path}`, opts);
+    let res;
+    try {
+      res = await fetch(`${BASE}${path}`, opts);
+    } catch (netErr) {
+      // Translate raw browser "TypeError: Failed to fetch" into a user-readable message.
+      // This occurs when: (a) the server is unreachable, (b) a CORS error blocks the
+      // response body, or (c) the connection drops mid-flight.
+      // After the backend middleware reorder fix, CORS errors on 429 will surface as the
+      // proper rate-limit message from the server body instead of landing here.
+      const msg = netErr && netErr.message ? netErr.message : 'Network error';
+      throw new Error(
+        `Unable to reach Spatial Watch server — ${msg}. ` +
+        `Check your connection and try again. If the issue persists, refreshing the page may help.`
+      );
+    }
 
     if (res.status === 204) {
       return null;
@@ -40,6 +54,7 @@ const API = (() => {
     }
     return data;
   }
+
 
   function getSession() {
     if (!sessionPromise) {
@@ -126,3 +141,11 @@ const API = (() => {
     },
   };
 })();
+
+if (typeof window !== 'undefined') {
+  window.API = API;
+}
+if (typeof module !== 'undefined' && module.exports) {
+  module.exports = API;
+}
+

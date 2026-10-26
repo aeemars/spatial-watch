@@ -194,7 +194,7 @@
                     <svg width="30" height="30" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
                   </div>
                   <div class="upload-dropzone__title">Drag & drop your video clip here</div>
-                  <div class="upload-dropzone__desc">Direct Cloudflare R2 Upload · MP4 up to 500MB</div>
+                  <div class="upload-dropzone__desc">Direct Cloudflare R2 Upload · MP4 up to 2GB · 1-hour+ screenings supported</div>
                   <button class="btn btn--secondary btn--xs upload-dropzone__btn" type="button" id="btn-upload-browse">Browse Video File</button>
                 </div>
 
@@ -663,7 +663,10 @@
             Common causes: The remote server is blocking Cross-Origin requests (CORS), the URL has expired, or the codec is incompatible with WebXR textures.
           </div>
           <div class="cinema-error__actions">
-            <button class="btn btn--primary btn--md" id="btn-cinema-error-back" type="button">
+            <button class="btn btn--primary btn--md" id="btn-cinema-error-retry" type="button">
+              Retry Stream
+            </button>
+            <button class="btn btn--secondary btn--md" id="btn-cinema-error-back" type="button">
               Return to Lobby
             </button>
           </div>

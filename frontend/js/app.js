@@ -657,10 +657,10 @@ const App = (() => {
       return;
     }
 
-    // Validate size (max 500MB)
-    const maxSize = 500 * 1024 * 1024;
+    // Validate size (max 2GB — R2 supports up to 5GB; 2GB comfortably covers 1-hour 1080p screenings)
+    const maxSize = 2 * 1024 * 1024 * 1024;
     if (file.size > maxSize) {
-      showToast('File size exceeds the 500MB limit', 'error');
+      showToast('File size exceeds the 2GB limit', 'error');
       return;
     }
 
@@ -750,10 +750,12 @@ const App = (() => {
         resolve(0);
       };
 
+      // 15 seconds: large 1-hour MP4s with moov atoms at the end of the file
+      // take 6-10 seconds to parse metadata; 5s was too tight and returned 0.
       setTimeout(() => {
         cleanup();
         resolve(0);
-      }, 5000);
+      }, 15000);
     });
   }
 
@@ -1053,7 +1055,7 @@ const App = (() => {
             }
           };
           xhr.onerror = () => {
-            reject(new Error('Network or CORS error connecting directly to storage bucket'));
+            reject(new Error('Network or storage connection interrupted during upload. Please check your connection and try again.'));
           };
           xhr.send(uploadedFile);
         });
@@ -1310,7 +1312,9 @@ const App = (() => {
 
       document.getElementById('lobby-dc-badge').hidden = !room.directorCutEnabled;
 
-      // Preload media metadata and buffer blob for zero-lag streaming
+      // Preload media metadata only — no full-file buffering.
+      // Joining participants stream via HTTP 206 Range requests; only the uploading
+      // host serves media from a local blob-URL (seeded via seedMediaBlob).
       if (room.mediaUrl) {
         Cinema.preloadMedia(
           room.mediaUrl,
@@ -1318,15 +1322,14 @@ const App = (() => {
             if (window.XR && typeof XR.setMediaReady === 'function') {
               XR.setMediaReady(true, { duration: room.durationSeconds });
             }
+            updateLobbyStreamReady();
           },
           () => {
             if (window.XR && typeof XR.setMediaReady === 'function') {
               XR.setMediaReady(false);
             }
           },
-          (percent, loaded, total) => {
-            updateLobbyBufferProgress(percent, loaded, total);
-          }
+          () => {} // No per-byte progress bar for progressive streaming
         );
       }
 
@@ -1337,7 +1340,14 @@ const App = (() => {
     }
   }
 
-  function updateLobbyBufferProgress(percent, loaded, total) {
+  /**
+   * updateLobbyStreamReady — shows a clean "Stream Ready" confirmation.
+   * Replaces the old MB-based download progress bar which was misleading:
+   * joiners saw "Buffering video (35 / 850 MB)" and thought they were uploading.
+   * Now that progressive HTTP 206 Range streaming is used, there is no full-file
+   * download, so no byte-counter is meaningful or necessary.
+   */
+  function updateLobbyStreamReady() {
     const wrap = document.getElementById('lobby-buffer-status');
     const fill = document.getElementById('lobby-buffer-fill');
     const pctEl = document.getElementById('lobby-buffer-percent');
@@ -1345,24 +1355,15 @@ const App = (() => {
     if (!wrap) return;
 
     wrap.hidden = false;
-    if (fill) fill.style.width = `${percent}%`;
-    if (pctEl) pctEl.textContent = `${percent}%`;
+    if (fill) fill.style.width = '100%';
+    if (pctEl) pctEl.textContent = '';
+    if (label) label.textContent = '✓ Stream Ready · Cloudflare Edge Progressive Streaming';
+    wrap.classList.add('lobby-buffer-status--ready');
+  }
 
-    if (percent >= 100) {
-      if (label) label.textContent = '✓ Fully buffered for zero-lag playback';
-      wrap.classList.add('lobby-buffer-status--ready');
-    } else {
-      wrap.classList.remove('lobby-buffer-status--ready');
-      if (label) {
-        if (total > 0) {
-          const mbLoaded = (loaded / (1024 * 1024)).toFixed(1);
-          const mbTotal = (total / (1024 * 1024)).toFixed(1);
-          label.textContent = `Buffering video (${mbLoaded}/${mbTotal} MB)…`;
-        } else {
-          label.textContent = 'Buffering video for zero-lag playback…';
-        }
-      }
-    }
+  function updateLobbyBufferProgress() {
+    // No-op: full-file byte buffering is removed. Joining participants use
+    // native HTTP 206 Range streaming. See updateLobbyStreamReady() instead.
   }
 
   function updateParticipantList(parts) {

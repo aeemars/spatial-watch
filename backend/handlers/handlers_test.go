@@ -1111,9 +1111,11 @@ func TestPresignedUpload_RejectsOversizedFile(t *testing.T) {
 	rig := setupTestRig()
 	_, cookie := createTestGuestSession(t, rig)
 
+	// The upload cap was raised from 500MB to 2GB to support 1-hour screenings.
+	// A 3GB file must still be rejected with 400 Bad Request.
 	body, _ := json.Marshal(handlers.PresignUploadRequest{
 		FileName:    "huge.mp4",
-		FileSize:    600 * 1024 * 1024, // 600MB > 500MB
+		FileSize:    3 * 1024 * 1024 * 1024, // 3GB > 2GB cap
 		ContentType: "video/mp4",
 	})
 	req, _ := http.NewRequest("POST", "/api/media/presign-upload", bytes.NewBuffer(body))
@@ -1123,7 +1125,23 @@ func TestPresignedUpload_RejectsOversizedFile(t *testing.T) {
 	rig.Router.ServeHTTP(rr, req)
 
 	if rr.Code != http.StatusBadRequest {
-		t.Fatalf("Expected 400 Bad Request for file > 500MB, got %d", rr.Code)
+		t.Fatalf("Expected 400 Bad Request for file > 2GB, got %d", rr.Code)
+	}
+
+	// Verify 600MB (previously rejected under the old 500MB cap) is now accepted
+	body600, _ := json.Marshal(handlers.PresignUploadRequest{
+		FileName:    "one-hour-movie.mp4",
+		FileSize:    600 * 1024 * 1024, // 600MB — valid under 2GB cap
+		ContentType: "video/mp4",
+	})
+	req600, _ := http.NewRequest("POST", "/api/media/presign-upload", bytes.NewBuffer(body600))
+	req600.Header.Set("Content-Type", "application/json")
+	req600.AddCookie(cookie)
+	rr600 := httptest.NewRecorder()
+	rig.Router.ServeHTTP(rr600, req600)
+
+	if rr600.Code != http.StatusOK {
+		t.Fatalf("Expected 200 OK for 600MB file (within 2GB cap), got %d", rr600.Code)
 	}
 }
 

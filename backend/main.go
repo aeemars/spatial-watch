@@ -122,11 +122,13 @@ func main() {
 	// Set up router
 	r := mux.NewRouter()
 
-	// Apply defensive security headers, Cloudflare edge cache, rate limiting, and CORS middlewares
+	// CORS must be registered first so every response — including 429 rate-limit rejections,
+	// 500 errors, and WebSocket handshake upgrades — carries Access-Control-Allow-Origin.
+	// Browsers will otherwise silently convert any non-CORS response into "Failed to fetch".
+	r.Use(corsMiddleware(cfg.CORSAllowedOrigins))
 	r.Use(securityHeadersMiddleware())
 	r.Use(cache.Middleware())
 	r.Use(limiter.Middleware())
-	r.Use(corsMiddleware(cfg.CORSAllowedOrigins))
 
 	// API routes
 	api := r.PathPrefix("/api").Subrouter()

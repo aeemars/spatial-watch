@@ -42,115 +42,48 @@ const Cinema = (() => {
     return blobUrlCache.get(canonical) || null;
   }
 
+  /**
+   * getOrFetchMediaBlobUrl — Global Upload-Once, Progressive Edge Streaming
+   *
+   * Design intent:
+   *   - The host uploads the video ONCE to Cloudflare R2. All other participants
+   *     stream it directly from R2 via progressive HTTP 206 Range requests.
+   *   - We NEVER download the entire video file into JavaScript RAM.
+   *     Doing so caused: tab crashes, out-of-memory aborts, misleading "upload" bars,
+   *     and CORS fetch failures on R2 public subdomains.
+   *   - The ONLY in-memory blob path is for the uploading host, who seeded the local
+   *     File object via seedMediaBlob() — giving them zero-egress instant playback.
+   *
+   * Return contract:
+   *   - Returns a local blob:-URL if the media was seeded from a local File (host path).
+   *   - Returns the original mediaUrl directly for all remote-hosted media (joiner path).
+   *     The <video src="..."> element then streams via HTTP 206 Range natively.
+   */
   async function getOrFetchMediaBlobUrl(mediaUrl, onProgress) {
     if (!mediaUrl) return mediaUrl;
     const canonical = normalizeUrl(mediaUrl);
 
-    // 1. If already created in RAM this session
+    // 1. If the host seeded a local File blob (seedMediaBlob), serve it instantly.
+    //    This is the ONLY code path that uses in-memory blob storage — and only for
+    //    the uploader themselves, whose File object was already in local RAM.
     if (blobUrlCache.has(canonical)) {
       const cached = blobUrlCache.get(canonical);
+      downloadProgressMap.set(canonical, { percent: 100, loaded: 1, total: 1 });
       if (typeof onProgress === 'function') onProgress(100, 1, 1);
       return cached;
     }
 
-    // 2. If download is already in-flight, attach to shared promise
-    if (activeDownloads.has(canonical)) {
-      if (typeof onProgress === 'function') {
-        const lastProg = downloadProgressMap.get(canonical);
-        if (lastProg) onProgress(lastProg.percent, lastProg.loaded, lastProg.total);
-      }
-      return activeDownloads.get(canonical);
-    }
-
-    const downloadPromise = (async () => {
-      try {
-        // 3. Check persistent CacheStorage API
-        if (typeof window !== 'undefined' && window.caches && typeof window.caches.open === 'function') {
-          try {
-            const cache = await window.caches.open(CACHE_NAME);
-            const cachedResponse = await cache.match(canonical);
-            if (cachedResponse) {
-              const blob = await cachedResponse.blob();
-              if (blob && blob.size > 0) {
-                const blobUrl = URL.createObjectURL(blob);
-                blobUrlCache.set(canonical, blobUrl);
-                downloadProgressMap.set(canonical, { percent: 100, loaded: blob.size, total: blob.size });
-                if (typeof onProgress === 'function') onProgress(100, blob.size, blob.size);
-                return blobUrl;
-              }
-            }
-          } catch (cacheErr) {
-            console.warn('[cinema] Cache API read warning:', cacheErr);
-          }
-        }
-
-        // 4. Stream-download via fetch with progress reporting
-        const response = await fetch(mediaUrl, { mode: 'cors' });
-        if (!response.ok) {
-          throw new Error(`Media fetch returned status ${response.status}`);
-        }
-
-        const contentLengthHeader = response.headers.get('content-length');
-        const totalBytes = contentLengthHeader ? parseInt(contentLengthHeader, 10) : 0;
-        const contentType = response.headers.get('content-type') || 'video/mp4';
-
-        let blob;
-        if (!response.body || totalBytes === 0) {
-          blob = await response.blob();
-          if (typeof onProgress === 'function') onProgress(100, blob.size, blob.size);
-        } else {
-          const reader = response.body.getReader();
-          let loadedBytes = 0;
-          const chunks = [];
-
-          while (true) {
-            const { done, value } = await reader.read();
-            if (done) break;
-            chunks.push(value);
-            loadedBytes += value.length;
-            if (totalBytes > 0) {
-              const pct = Math.min(99, Math.round((loadedBytes / totalBytes) * 100));
-              downloadProgressMap.set(canonical, { percent: pct, loaded: loadedBytes, total: totalBytes });
-              if (typeof onProgress === 'function') {
-                onProgress(pct, loadedBytes, totalBytes);
-              }
-            }
-          }
-          blob = new Blob(chunks, { type: contentType });
-        }
-
-        // 5. Store response in persistent CacheStorage
-        if (typeof window !== 'undefined' && window.caches && typeof window.caches.open === 'function' && blob && blob.size > 0) {
-          try {
-            const cache = await window.caches.open(CACHE_NAME);
-            const cacheResponse = new Response(blob, {
-              headers: {
-                'Content-Type': contentType,
-                'Content-Length': String(blob.size),
-              },
-            });
-            await cache.put(canonical, cacheResponse);
-          } catch (cacheErr) {
-            console.warn('[cinema] Cache API write warning:', cacheErr);
-          }
-        }
-
-        const blobUrl = URL.createObjectURL(blob);
-        blobUrlCache.set(canonical, blobUrl);
-        downloadProgressMap.set(canonical, { percent: 100, loaded: blob.size, total: blob.size });
-        if (typeof onProgress === 'function') onProgress(100, blob.size, blob.size);
-        return blobUrl;
-      } catch (err) {
-        console.warn('[cinema] Blob prefetch error, falling back to direct stream:', err);
-        return mediaUrl;
-      } finally {
-        activeDownloads.delete(canonical);
-      }
-    })();
-
-    activeDownloads.set(canonical, downloadPromise);
-    return downloadPromise;
+    // 2. For ALL remote media (R2, custom hosted, catalog): bypass full-file fetch.
+    //    Return the URL directly so the browser uses progressive HTTP 206 Range streaming.
+    //    Attempting fetch(remoteUrl) into a Blob:
+    //      a) Fails on R2 public r2.dev URLs (no CORS headers on cross-origin GET).
+    //      b) Exhausts JS heap for 1-hour videos (300 MB – 2 GB).
+    //      c) Looks like an "upload bar" to the joining participant.
+    downloadProgressMap.set(canonical, { percent: 100, loaded: 1, total: 1 });
+    if (typeof onProgress === 'function') onProgress(100, 1, 1);
+    return mediaUrl;
   }
+
 
   function showBuffering(text, percent) {
     if (typeof document === 'undefined') return;
@@ -342,42 +275,9 @@ const Cinema = (() => {
       isVideoTextureDirty = true;
     };
 
-    // Normalize URL for comparison
-    const canonical = normalizeUrl(mediaUrl);
-
-    // If cached in RAM or Cache API, use blob URL
-    const cachedBlob = getCachedBlobUrl(canonical);
-
-    if (cachedBlob && (currentMediaUrl !== canonical || video.error || video.readyState === 0)) {
-      currentMediaUrl = canonical;
-      isMediaReadyState = false;
-      video.src = cachedBlob;
-      video.load();
-    } else if (currentMediaUrl === canonical && video.readyState >= 1) {
-      isMediaReadyState = true;
-      hideBuffering();
-      updateScreenDimensions();
-      if (typeof onReadyCallback === 'function') onReadyCallback(video);
-      if (window.XR && typeof XR.setMediaReady === 'function') {
-        XR.setMediaReady(true, { duration: video.duration });
-      }
-    } else {
-      currentMediaUrl = canonical;
-      isMediaReadyState = false;
-      video.src = mediaUrl;
-      video.load();
-      showBuffering('Connecting screening stream…', 0);
-
-      getOrFetchMediaBlobUrl(mediaUrl, (pct) => {
-        if (!isMediaReadyState) {
-          showBuffering('Buffering screening for zero-lag playback…', pct);
-        }
-      }).catch((err) => {
-        console.warn('[cinema] background blob prefetch notice:', err);
-      });
-    }
-
-    // Initialize Three.js
+    // Initialize Three.js synchronously — this must run before any await so that
+    // renderer, scene, and video texture are available immediately after init() returns.
+    // Tests and callers rely on Cinema.getRenderer() being non-null synchronously.
     if (typeof THREE === 'undefined') {
       console.error('[cinema] Three.js is not loaded');
       throw new Error('3D Cinema engine (Three.js) is not available');
@@ -427,7 +327,55 @@ const Cinema = (() => {
     if (!renderer.xr.isPresenting) {
       initDesktopControls();
     }
+
+    // Async video source resolution — kicked off as a non-blocking task.
+    // Three.js is already initialized above; this only handles video.src assignment.
+    // Uses progressive HTTP 206 Range streaming for all remote URLs (joiners),
+    // or the host's local blob-URL if seeded via seedMediaBlob().
+    (async () => {
+      const canonical = normalizeUrl(mediaUrl);
+
+      // Resolve URL: blob-URL for seeded host file, direct URL for remote streaming
+      const resolvedUrl = await getOrFetchMediaBlobUrl(mediaUrl, () => {});
+
+      if (!video) return; // Cinema was destroyed before resolution completed
+
+      // Reset the <video> element to clear any latched MediaError state.
+      // In an SPA, the same <video id="cinema-video"> element is reused across room changes.
+      // Without this reset, a prior network error (code 4 CORS/expired) permanently prevents
+      // the element from loading new sources — which was why "browser refresh" cleared the error.
+      const hasError = video.error !== null;
+      const isNewMedia = currentMediaUrl !== canonical;
+      const isUnloaded = video.readyState === 0;
+
+      if (currentMediaUrl === canonical && !video.error && video.readyState >= 1) {
+        // Same media already loaded and healthy — skip re-load, fire ready callback directly
+        isMediaReadyState = true;
+        hideBuffering();
+        updateScreenDimensions();
+        if (typeof onReadyCallback === 'function') onReadyCallback(video);
+        if (window.XR && typeof XR.setMediaReady === 'function') {
+          XR.setMediaReady(true, { duration: video.duration });
+        }
+      } else {
+        // Full teardown: clears latched MediaError, aborts stalled network connections,
+        // and forces the browser to start fresh with the new source URL.
+        if (hasError || isNewMedia || isUnloaded) {
+          video.pause();
+          video.removeAttribute('src');
+          video.load(); // Signals browser to abandon current resource fetch
+        }
+
+        currentMediaUrl = canonical;
+        isMediaReadyState = false;
+        video.src = resolvedUrl;
+        video.load();
+        showBuffering('Connecting screening stream…', 0);
+      }
+    })();
   }
+
+
 
   function buildTheater() {
     // Floor
@@ -576,6 +524,11 @@ const Cinema = (() => {
     getOrFetchMediaBlobUrl(mediaUrl, onProgress).then((resolvedUrl) => {
       if (!video) return;
       if (currentMediaUrl !== canonical || video.error || video.readyState === 0) {
+        if (video.error || currentMediaUrl !== canonical) {
+          video.pause();
+          video.removeAttribute('src');
+          video.load();
+        }
         currentMediaUrl = canonical;
         isMediaReadyState = false;
         video.src = resolvedUrl;
@@ -585,7 +538,12 @@ const Cinema = (() => {
       }
     }).catch((err) => {
       console.warn('[cinema] preload fallback:', err);
-      if (currentMediaUrl !== canonical) {
+      if (currentMediaUrl !== canonical || video.error) {
+        if (video.error || currentMediaUrl !== canonical) {
+          video.pause();
+          video.removeAttribute('src');
+          video.load();
+        }
         currentMediaUrl = canonical;
         isMediaReadyState = false;
         video.src = mediaUrl;
@@ -594,11 +552,34 @@ const Cinema = (() => {
     });
   }
 
+  function retryStream() {
+    hideMediaError();
+    if (!video || !currentMediaUrl) return;
+
+    // Reset video element to clear latched MediaError without requiring a browser refresh
+    video.pause();
+    video.removeAttribute('src');
+    video.load();
+
+    showBuffering('Connecting screening stream…', 0);
+    getOrFetchMediaBlobUrl(currentMediaUrl, () => {}).then((resolvedUrl) => {
+      if (!video) return;
+      isMediaReadyState = false;
+      video.crossOrigin = 'anonymous';
+      video.src = resolvedUrl;
+      video.load();
+    }).catch((err) => {
+      console.warn('[cinema] retry failed:', err);
+      showMediaError(video ? video.error : null);
+    });
+  }
+
   function showMediaError(errorDetails) {
     if (typeof document === 'undefined') return;
     const overlay = document.getElementById('cinema-error-overlay');
     const msgEl = document.getElementById('cinema-error-message');
     const guidanceEl = document.getElementById('cinema-error-guidance');
+    const retryBtn = document.getElementById('btn-cinema-error-retry');
     const backBtn = document.getElementById('btn-cinema-error-back');
     if (!overlay) return;
 
@@ -617,6 +598,12 @@ const Cinema = (() => {
     if (msgEl) msgEl.textContent = reason;
     if (guidanceEl) guidanceEl.textContent = guidance;
     overlay.hidden = false;
+
+    if (retryBtn) {
+      retryBtn.onclick = () => {
+        retryStream();
+      };
+    }
 
     if (backBtn) {
       backBtn.onclick = () => {
@@ -978,6 +965,7 @@ const Cinema = (() => {
     removeSeatMarker,
     destroy,
     preloadMedia,
+    retryStream,
     showMediaError,
     hideMediaError,
     showBuffering,
