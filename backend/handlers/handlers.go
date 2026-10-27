@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"net"
 	"net/http"
 	"net/url"
 	"os"
@@ -79,16 +80,13 @@ func NewHandler(
 // Health returns service health status and active persistence engine
 func (h *Handler) Health(w http.ResponseWriter, r *http.Request) {
 	persistence := "in-memory"
-	dbName := ""
 	if h.RoomRepo != nil && h.RoomRepo.IsMongo() {
 		persistence = "mongodb"
-		dbName = h.RoomRepo.DatabaseName()
 	}
 
 	respondJSON(w, http.StatusOK, map[string]interface{}{
 		"status":      "ok",
 		"persistence": persistence,
-		"database":    dbName,
 		"time":        time.Now().UTC().Format(time.RFC3339),
 	})
 }
@@ -399,11 +397,12 @@ func (h *Handler) JoinRoom(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	roomCode := strings.TrimSpace(strings.ToUpper(req.RoomCode))
-	if len(roomCode) < 4 {
-		respondError(w, http.StatusBadRequest, "Invalid room code")
+	validRoomCode, err := auth.ValidateRoomCode(req.RoomCode)
+	if err != nil {
+		respondError(w, http.StatusBadRequest, "Invalid room code format (must be 4-16 alphanumeric characters)")
 		return
 	}
+	roomCode := validRoomCode
 
 	displayName := authUser.DisplayName
 	if trimmed := strings.TrimSpace(req.DisplayName); trimmed != "" {
@@ -458,7 +457,11 @@ func (h *Handler) JoinRoom(w http.ResponseWriter, r *http.Request) {
 // GetRoom handles GET /api/rooms/{roomCode}
 func (h *Handler) GetRoom(w http.ResponseWriter, r *http.Request) {
 	vars := mux.Vars(r)
-	roomCode := strings.ToUpper(vars["roomCode"])
+	roomCode, err := auth.ValidateRoomCode(vars["roomCode"])
+	if err != nil {
+		respondError(w, http.StatusBadRequest, "Invalid room code")
+		return
+	}
 
 	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
 	defer cancel()
@@ -843,7 +846,11 @@ func (h *Handler) ShutdownRoom(w http.ResponseWriter, r *http.Request) {
 	}
 
 	vars := mux.Vars(r)
-	roomCode := strings.ToUpper(vars["roomCode"])
+	roomCode, err := auth.ValidateRoomCode(vars["roomCode"])
+	if err != nil {
+		respondError(w, http.StatusBadRequest, "Invalid room code")
+		return
+	}
 
 	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
 	defer cancel()
@@ -888,7 +895,11 @@ func (h *Handler) LeaveRoom(w http.ResponseWriter, r *http.Request) {
 	}
 
 	vars := mux.Vars(r)
-	roomCode := strings.ToUpper(vars["roomCode"])
+	roomCode, err := auth.ValidateRoomCode(vars["roomCode"])
+	if err != nil {
+		respondError(w, http.StatusBadRequest, "Invalid room code")
+		return
+	}
 
 	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
 	defer cancel()
@@ -913,7 +924,11 @@ func formatMediaTitle(urlStr string) string {
 // GetCommentary handles GET /api/rooms/{roomCode}/commentary
 func (h *Handler) GetCommentary(w http.ResponseWriter, r *http.Request) {
 	vars := mux.Vars(r)
-	roomCode := strings.ToUpper(vars["roomCode"])
+	roomCode, err := auth.ValidateRoomCode(vars["roomCode"])
+	if err != nil {
+		respondError(w, http.StatusBadRequest, "Invalid room code")
+		return
+	}
 
 	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
 	defer cancel()
@@ -945,9 +960,10 @@ func (h *Handler) HandleWebSocket(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	roomCode := strings.ToUpper(strings.TrimSpace(r.URL.Query().Get("roomCode")))
-	if roomCode == "" {
-		http.Error(w, "Missing roomCode parameter", http.StatusBadRequest)
+	rawCode := r.URL.Query().Get("roomCode")
+	roomCode, err := auth.ValidateRoomCode(rawCode)
+	if err != nil {
+		http.Error(w, "Invalid or missing roomCode parameter", http.StatusBadRequest)
 		return
 	}
 
@@ -1002,9 +1018,20 @@ func IsOriginAllowed(origin string, allowedOrigins []string, serverHost string) 
 		return false
 	}
 
-	// Exact match against server Host header
-	if serverHost != "" && strings.EqualFold(u.Host, serverHost) {
-		return true
+	originHost := strings.ToLower(u.Hostname())
+	if originHost == "" {
+		return false
+	}
+
+	// Exact match against server Host header (ignoring port)
+	if serverHost != "" {
+		hostOnly := serverHost
+		if h, _, err := net.SplitHostPort(serverHost); err == nil {
+			hostOnly = h
+		}
+		if strings.EqualFold(originHost, hostOnly) {
+			return true
+		}
 	}
 
 	for _, allowed := range allowedOrigins {
@@ -1017,36 +1044,39 @@ func IsOriginAllowed(origin string, allowedOrigins []string, serverHost string) 
 			return true
 		}
 
-		// Wildcard domain matching: *.pages.dev, https://*.pages.dev, etc.
-		if strings.HasPrefix(allowed, "*.") {
-			suffix := strings.TrimPrefix(allowed, "*")
-			if strings.HasSuffix(strings.ToLower(u.Host), strings.ToLower(suffix)) {
-				return true
-			}
-		} else if strings.HasPrefix(allowed, "https://*.") {
-			suffix := strings.TrimPrefix(allowed, "https://*")
-			if u.Scheme == "https" && strings.HasSuffix(strings.ToLower(u.Host), strings.ToLower(suffix)) {
-				return true
-			}
-		} else if strings.HasPrefix(allowed, "http://*.") {
-			suffix := strings.TrimPrefix(allowed, "http://*")
-			if u.Scheme == "http" && strings.HasSuffix(strings.ToLower(u.Host), strings.ToLower(suffix)) {
-				return true
+		// Exact host match from allowed URL
+		if allowedURL, err := url.Parse(allowed); err == nil && allowedURL.Hostname() != "" {
+			if strings.EqualFold(originHost, strings.ToLower(allowedURL.Hostname())) {
+				if allowedURL.Scheme == "" || strings.EqualFold(u.Scheme, allowedURL.Scheme) {
+					return true
+				}
 			}
 		}
 
-		if allowedURL, err := url.Parse(allowed); err == nil && allowedURL.Host != "" {
-			if strings.EqualFold(u.Host, allowedURL.Host) {
-				return true
+		// Secure wildcard matching (e.g. *.domain.com or https://*.domain.com)
+		pattern := allowed
+		requiredScheme := ""
+		if strings.HasPrefix(pattern, "https://") {
+			requiredScheme = "https"
+			pattern = strings.TrimPrefix(pattern, "https://")
+		} else if strings.HasPrefix(pattern, "http://") {
+			requiredScheme = "http"
+			pattern = strings.TrimPrefix(pattern, "http://")
+		}
+
+		if strings.HasPrefix(pattern, "*.") {
+			baseDomain := strings.ToLower(strings.TrimPrefix(pattern, "*."))
+			if baseDomain != "" && (originHost == baseDomain || strings.HasSuffix(originHost, "."+baseDomain)) {
+				if requiredScheme == "" || strings.EqualFold(u.Scheme, requiredScheme) {
+					return true
+				}
 			}
 		}
 	}
 
-	// In development mode (when no explicit CORS origins are configured),
-	// permit localhost and 127.0.0.1
+	// In development mode (when no explicit CORS origins are configured), permit localhost and 127.0.0.1
 	if len(allowedOrigins) == 0 {
-		hostname := u.Hostname()
-		if hostname == "localhost" || hostname == "127.0.0.1" {
+		if originHost == "localhost" || originHost == "127.0.0.1" {
 			return true
 		}
 	}
@@ -1156,10 +1186,7 @@ func (h *Handler) MockUpload(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// 2. Limit upload body size to 2GB (mirrors PresignUpload handler cap)
-	r.Body = http.MaxBytesReader(w, r.Body, 2*1024*1024*1024)
-
-	// 3. Check expiration timestamp if provided
+	// 2. Check expiration timestamp if provided (presigned simulation)
 	if expStr := r.URL.Query().Get("expires"); expStr != "" {
 		if expInt, err := strconv.ParseInt(expStr, 10, 64); err == nil {
 			if time.Now().Unix() > expInt {
@@ -1176,12 +1203,15 @@ func (h *Handler) MockUpload(w http.ResponseWriter, r *http.Request) {
 		cleanName = fmt.Sprintf("upload-%d.mp4", time.Now().UnixNano())
 	}
 
-	// 4. Validate file extension to prevent arbitrary file writes and stored XSS
+	// 3. Validate file extension to prevent arbitrary file writes and stored XSS
 	ext := strings.ToLower(filepath.Ext(cleanName))
 	if ext != ".mp4" && ext != ".webm" && ext != ".mov" {
 		respondError(w, http.StatusBadRequest, "Only .mp4, .webm, or .mov video files are supported")
 		return
 	}
+
+	// 4. Limit upload body size to 2GB (mirrors PresignUpload handler cap)
+	r.Body = http.MaxBytesReader(w, r.Body, 2*1024*1024*1024)
 
 	uploadDir := filepath.Join("frontend", "assets", "uploads")
 	if _, err := os.Stat(uploadDir); os.IsNotExist(err) {

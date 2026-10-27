@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -12,11 +13,11 @@ import (
 
 // Rule defines rate limiting parameters for a route
 type Rule struct {
-	Name    string
-	Method  string
-	Path    string
-	Limit   int
-	Window  time.Duration
+	Name   string
+	Method string
+	Path   string
+	Limit  int
+	Window time.Duration
 }
 
 type clientRecord struct {
@@ -25,24 +26,40 @@ type clientRecord struct {
 
 // Limiter manages thread-safe sliding window rate limiting
 type Limiter struct {
-	mu      sync.RWMutex
-	rules   map[string]Rule
-	clients map[string]map[string]*clientRecord // ruleName -> ip -> record
-	stopCh  chan struct{}
+	mu        sync.RWMutex
+	rulesMap  map[string]Rule
+	rulesList []Rule
+	clients   map[string]map[string]*clientRecord // ruleName -> ip -> record
+	stopCh    chan struct{}
+}
+
+func pathMatches(pattern, path string) bool {
+	if pattern == path {
+		return true
+	}
+	if !strings.Contains(pattern, "*") {
+		return false
+	}
+	parts := strings.Split(pattern, "*")
+	if len(parts) == 2 {
+		return strings.HasPrefix(path, parts[0]) && strings.HasSuffix(path, parts[1])
+	}
+	return false
 }
 
 // NewLimiter creates a new Limiter with the provided rules
 func NewLimiter(rules []Rule) *Limiter {
 	l := &Limiter{
-		rules:   make(map[string]Rule),
-		clients: make(map[string]map[string]*clientRecord),
-		stopCh:  make(chan struct{}),
+		rulesMap:  make(map[string]Rule),
+		rulesList: rules,
+		clients:   make(map[string]map[string]*clientRecord),
+		stopCh:    make(chan struct{}),
 	}
 
 	for _, r := range rules {
 		key := ruleKey(r.Method, r.Path)
-		l.rules[key] = r
-		l.clients[key] = make(map[string]*clientRecord)
+		l.rulesMap[key] = r
+		l.clients[r.Name] = make(map[string]*clientRecord)
 	}
 
 	// Start background cleanup goroutine
@@ -54,9 +71,16 @@ func NewLimiter(rules []Rule) *Limiter {
 // NewDefaultLimiter creates a Limiter initialized with the production anti-abuse rules:
 // - POST /api/rooms: 5 req per 5 min
 // - GET /api/auth/session: 30 req per 1 min
+// - POST /api/auth/logout: 30 req per 1 min
 // - POST /api/media/presign-upload: 10 req per 10 min
 // - POST /api/rooms/join: 20 req per 1 min
 // - PATCH /api/auth/profile: 20 req per 1 min
+// - GET /api/user/rooms: 30 req per 1 min
+// - GET /api/media-assets: 60 req per 1 min
+// - GET /api/rooms/*/commentary: 60 req per 1 min
+// - GET /api/rooms/*: 60 req per 1 min
+// - DELETE /api/rooms/*: 10 req per 5 min
+// - POST /api/rooms/*/leave: 20 req per 1 min
 // - GET /ws: 10 handshakes per 1 min
 func NewDefaultLimiter() *Limiter {
 	return NewLimiter([]Rule{
@@ -71,6 +95,13 @@ func NewDefaultLimiter() *Limiter {
 			Name:   "auth_session",
 			Method: http.MethodGet,
 			Path:   "/api/auth/session",
+			Limit:  30,
+			Window: 1 * time.Minute,
+		},
+		{
+			Name:   "auth_logout",
+			Method: http.MethodPost,
+			Path:   "/api/auth/logout",
 			Limit:  30,
 			Window: 1 * time.Minute,
 		},
@@ -96,6 +127,48 @@ func NewDefaultLimiter() *Limiter {
 			Window: 1 * time.Minute,
 		},
 		{
+			Name:   "user_rooms",
+			Method: http.MethodGet,
+			Path:   "/api/user/rooms",
+			Limit:  30,
+			Window: 1 * time.Minute,
+		},
+		{
+			Name:   "media_assets",
+			Method: http.MethodGet,
+			Path:   "/api/media-assets",
+			Limit:  60,
+			Window: 1 * time.Minute,
+		},
+		{
+			Name:   "get_commentary",
+			Method: http.MethodGet,
+			Path:   "/api/rooms/*/commentary",
+			Limit:  60,
+			Window: 1 * time.Minute,
+		},
+		{
+			Name:   "get_room",
+			Method: http.MethodGet,
+			Path:   "/api/rooms/*",
+			Limit:  60,
+			Window: 1 * time.Minute,
+		},
+		{
+			Name:   "shutdown_room",
+			Method: http.MethodDelete,
+			Path:   "/api/rooms/*",
+			Limit:  10,
+			Window: 5 * time.Minute,
+		},
+		{
+			Name:   "leave_room",
+			Method: http.MethodPost,
+			Path:   "/api/rooms/*/leave",
+			Limit:  20,
+			Window: 1 * time.Minute,
+		},
+		{
 			Name:   "websocket_handshake",
 			Method: http.MethodGet,
 			Path:   "/ws",
@@ -109,25 +182,39 @@ func ruleKey(method, path string) string {
 	return method + ":" + path
 }
 
+func (l *Limiter) findRule(method, path string) (Rule, bool) {
+	key := ruleKey(method, path)
+	if r, ok := l.rulesMap[key]; ok {
+		return r, true
+	}
+	// Check pattern rules (more specific/longer path first)
+	for _, r := range l.rulesList {
+		if r.Method == method && strings.Contains(r.Path, "*") {
+			if pathMatches(r.Path, path) {
+				return r, true
+			}
+		}
+	}
+	return Rule{}, false
+}
+
 // Allow checks if a request from the given IP for the specified method and path is allowed.
 // If allowed, it returns (true, 0).
 // If rejected, it returns (false, retryAfterSeconds).
 func (l *Limiter) Allow(method, path, ip string) (bool, int) {
-	key := ruleKey(method, path)
-
 	l.mu.Lock()
 	defer l.mu.Unlock()
 
-	rule, ok := l.rules[key]
+	rule, ok := l.findRule(method, path)
 	if !ok {
 		// Not rate-limited
 		return true, 0
 	}
 
-	ipMap, ok := l.clients[key]
+	ipMap, ok := l.clients[rule.Name]
 	if !ok {
 		ipMap = make(map[string]*clientRecord)
-		l.clients[key] = ipMap
+		l.clients[rule.Name] = ipMap
 	}
 
 	rec, ok := ipMap[ip]
@@ -195,9 +282,9 @@ func (l *Limiter) sweep() {
 	defer l.mu.Unlock()
 
 	now := time.Now()
-	for key, rule := range l.rules {
+	for _, rule := range l.rulesList {
 		cutoff := now.Add(-rule.Window)
-		ipMap := l.clients[key]
+		ipMap := l.clients[rule.Name]
 		for ip, rec := range ipMap {
 			valid := make([]time.Time, 0, len(rec.timestamps))
 			for _, t := range rec.timestamps {
@@ -224,9 +311,8 @@ func (l *Limiter) Middleware() mux.MiddlewareFunc {
 				return
 			}
 
-			key := ruleKey(r.Method, r.URL.Path)
 			l.mu.RLock()
-			_, hasRule := l.rules[key]
+			_, hasRule := l.findRule(r.Method, r.URL.Path)
 			l.mu.RUnlock()
 
 			if hasRule {
@@ -248,3 +334,4 @@ func (l *Limiter) Middleware() mux.MiddlewareFunc {
 		})
 	}
 }
+

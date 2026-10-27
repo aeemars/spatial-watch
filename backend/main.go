@@ -126,7 +126,7 @@ func main() {
 	// 500 errors, and WebSocket handshake upgrades — carries Access-Control-Allow-Origin.
 	// Browsers will otherwise silently convert any non-CORS response into "Failed to fetch".
 	r.Use(corsMiddleware(cfg.CORSAllowedOrigins))
-	r.Use(securityHeadersMiddleware())
+	r.Use(securityHeadersMiddleware(cfg.CookieSecure))
 	r.Use(cache.Middleware())
 	r.Use(limiter.Middleware())
 
@@ -165,12 +165,12 @@ func main() {
 	// WebSocket (authenticated inside handler via sw_session cookie)
 	r.HandleFunc("/ws", handler.HandleWebSocket).Methods("GET")
 
-	// Static files — serve the frontend
+	// Static files — serve the frontend safely without exposing directory listings or metadata files
 	frontendDir := filepath.Join("..", "frontend")
 	if _, err := os.Stat(frontendDir); os.IsNotExist(err) {
 		frontendDir = "frontend"
 	}
-	r.PathPrefix("/").Handler(http.FileServer(http.Dir(frontendDir)))
+	r.PathPrefix("/").Handler(http.FileServer(safeFileSystem{http.Dir(frontendDir)}))
 
 	// Start background room reaper to auto-shutdown rooms when their duration expires
 	stopReaper := handler.StartRoomReaper(15 * time.Second)
@@ -229,8 +229,49 @@ func main() {
 	}
 }
 
+// safeFileSystem wraps http.FileSystem to disallow directory listing and block dotfiles/metadata
+type safeFileSystem struct {
+	fs http.FileSystem
+}
+
+func (sfs safeFileSystem) Open(name string) (http.File, error) {
+	cleanPath := filepath.Clean(name)
+	parts := strings.Split(cleanPath, string(filepath.Separator))
+	for _, p := range parts {
+		if strings.HasPrefix(p, ".") && p != "." && p != ".." {
+			return nil, os.ErrPermission
+		}
+		if strings.HasPrefix(p, "_") {
+			return nil, os.ErrPermission
+		}
+	}
+
+	f, err := sfs.fs.Open(name)
+	if err != nil {
+		return nil, err
+	}
+
+	stat, err := f.Stat()
+	if err != nil {
+		f.Close()
+		return nil, err
+	}
+
+	if stat.IsDir() {
+		indexPath := filepath.Join(name, "index.html")
+		if indexFile, err := sfs.fs.Open(indexPath); err == nil {
+			indexFile.Close()
+		} else {
+			f.Close()
+			return nil, os.ErrNotExist
+		}
+	}
+
+	return f, nil
+}
+
 // securityHeadersMiddleware enforces defensive HTTP headers across all endpoints
-func securityHeadersMiddleware() mux.MiddlewareFunc {
+func securityHeadersMiddleware(cookieSecure bool) mux.MiddlewareFunc {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			w.Header().Set("X-Content-Type-Options", "nosniff")
@@ -238,6 +279,10 @@ func securityHeadersMiddleware() mux.MiddlewareFunc {
 			w.Header().Set("Referrer-Policy", "strict-origin-when-cross-origin")
 			w.Header().Set("X-XSS-Protection", "1; mode=block")
 			w.Header().Set("Permissions-Policy", "camera=(), microphone=(), geolocation=()")
+			w.Header().Set("Content-Security-Policy", "default-src 'self'; script-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com data:; img-src 'self' data: blob: https:; media-src 'self' blob: https:; connect-src 'self' wss: ws: https: blob:; worker-src 'self' blob:; object-src 'none'; frame-ancestors 'self';")
+			if cookieSecure || r.TLS != nil || r.Header.Get("X-Forwarded-Proto") == "https" {
+				w.Header().Set("Strict-Transport-Security", "max-age=31536000; includeSubDomains")
+			}
 			next.ServeHTTP(w, r)
 		})
 	}
@@ -252,7 +297,9 @@ func corsMiddleware(allowedOrigins []string) mux.MiddlewareFunc {
 				w.Header().Set("Access-Control-Allow-Origin", origin)
 				w.Header().Set("Access-Control-Allow-Credentials", "true")
 				w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PATCH, PUT, DELETE, OPTIONS")
-				w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Cookie")
+				w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Cookie, Authorization, X-Requested-With")
+				w.Header().Set("Access-Control-Max-Age", "86400")
+				w.Header().Add("Vary", "Origin")
 			}
 
 			if r.Method == http.MethodOptions {

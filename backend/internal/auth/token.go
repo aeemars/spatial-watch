@@ -17,6 +17,7 @@ var (
 	ErrInvalidDisplayName = errors.New("display name must be 2-32 characters without control characters or HTML")
 	ErrInvalidRoomName    = errors.New("room name must be 2-50 characters without control characters or HTML")
 	ErrInvalidCustomMedia = errors.New("custom media must be a valid HTTPS URL pointing to an .mp4 file with a valid title")
+	ErrInvalidRoomCode    = errors.New("room code must be 4-16 alphanumeric characters")
 )
 
 // GenerateToken generates a cryptographically secure, opaque random session token
@@ -197,5 +198,22 @@ func ValidateCustomMedia(rawURL, rawTitle string) (string, string, error) {
 	}
 
 	return trimmedURL, normalizedTitle, nil
+}
+
+// ValidateRoomCode ensures a room code meets safety requirements:
+// - Trimmed, converted to uppercase
+// - 4 to 16 characters
+// - Characters must be uppercase ASCII letters (A-Z), digits (0-9), or hyphen/underscore (- or _)
+func ValidateRoomCode(raw string) (string, error) {
+	trimmed := strings.ToUpper(strings.TrimSpace(raw))
+	if len(trimmed) < 4 || len(trimmed) > 16 {
+		return "", ErrInvalidRoomCode
+	}
+	for _, r := range trimmed {
+		if !((r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9') || r == '-' || r == '_') {
+			return "", ErrInvalidRoomCode
+		}
+	}
+	return trimmed, nil
 }
 

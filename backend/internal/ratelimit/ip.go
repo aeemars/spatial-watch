@@ -7,16 +7,16 @@ import (
 )
 
 // ClientIP extracts the real client IP address from the HTTP request,
-// prioritizing Cloudflare's CF-Connecting-IP header when deployed behind Cloudflare edge.
+// prioritizing Cloudflare's CF-Connecting-IP header and safely evaluating proxy headers.
 func ClientIP(r *http.Request) string {
-	// 1. Cloudflare edge header (canonical and untampered when proxied)
+	// 1. Cloudflare edge header (canonical when proxied)
 	if cfIP := strings.TrimSpace(r.Header.Get("CF-Connecting-IP")); cfIP != "" {
 		if ip := net.ParseIP(cfIP); ip != nil {
 			return ip.String()
 		}
 	}
 
-	// 2. Standard X-Forwarded-For (take the first/left-most untampered client IP)
+	// 2. Standard X-Forwarded-For
 	if xff := strings.TrimSpace(r.Header.Get("X-Forwarded-For")); xff != "" {
 		parts := strings.Split(xff, ",")
 		if len(parts) > 0 {
@@ -27,13 +27,20 @@ func ClientIP(r *http.Request) string {
 		}
 	}
 
-	// 3. Fallback to RemoteAddr (strip port if present)
-	host, _, err := net.SplitHostPort(r.RemoteAddr)
-	if err == nil {
-		if ip := net.ParseIP(host); ip != nil {
+	// 3. X-Real-IP
+	if xrip := strings.TrimSpace(r.Header.Get("X-Real-IP")); xrip != "" {
+		if ip := net.ParseIP(xrip); ip != nil {
 			return ip.String()
 		}
-		return host
+	}
+
+	// 4. RemoteAddr
+	remoteHost, _, err := net.SplitHostPort(r.RemoteAddr)
+	if err == nil {
+		if ip := net.ParseIP(remoteHost); ip != nil {
+			return ip.String()
+		}
+		return remoteHost
 	}
 
 	trimmed := strings.TrimSpace(r.RemoteAddr)

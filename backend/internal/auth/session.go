@@ -292,33 +292,62 @@ func (s *AuthService) ClearSessionCookie(w http.ResponseWriter) {
 	http.SetCookie(w, cookie)
 }
 
+func isPrivateOrLoopbackIP(ip net.IP) bool {
+	if ip == nil {
+		return false
+	}
+	return ip.IsLoopback() || ip.IsPrivate()
+}
+
 // getClientIP extracts IP address from request (handling Cloudflare & reverse proxies safely)
 func getClientIP(r *http.Request) string {
-	if cfIP := strings.TrimSpace(r.Header.Get("CF-Connecting-IP")); cfIP != "" {
-		if ip := net.ParseIP(cfIP); ip != nil {
-			return ip.String()
-		}
+	remoteHost, _, err := net.SplitHostPort(r.RemoteAddr)
+	if err != nil {
+		remoteHost = strings.TrimSpace(r.RemoteAddr)
 	}
-	if xff := r.Header.Get("X-Forwarded-For"); xff != "" {
-		parts := strings.Split(xff, ",")
-		if len(parts) > 0 {
-			ip := strings.TrimSpace(parts[0])
-			if parsed := net.ParseIP(ip); parsed != nil {
-				return parsed.String()
+	remoteIP := net.ParseIP(remoteHost)
+
+	// If behind a trusted private/loopback reverse proxy or container gateway
+	if remoteIP == nil || isPrivateOrLoopbackIP(remoteIP) {
+		// 1. Cloudflare edge header (canonical when proxied)
+		if cfIP := strings.TrimSpace(r.Header.Get("CF-Connecting-IP")); cfIP != "" {
+			if ip := net.ParseIP(cfIP); ip != nil {
+				return ip.String()
+			}
+		}
+
+		// 2. Standard X-Forwarded-For
+		if xff := strings.TrimSpace(r.Header.Get("X-Forwarded-For")); xff != "" {
+			parts := strings.Split(xff, ",")
+			if len(parts) > 0 {
+				first := strings.TrimSpace(parts[0])
+				if ip := net.ParseIP(first); ip != nil {
+					return ip.String()
+				}
+			}
+		}
+
+		// 3. X-Real-IP
+		if xrip := strings.TrimSpace(r.Header.Get("X-Real-IP")); xrip != "" {
+			if ip := net.ParseIP(xrip); ip != nil {
+				return ip.String()
+			}
+		}
+	} else {
+		// Direct public connection: only Cloudflare CF-Connecting-IP takes precedence
+		if cfIP := strings.TrimSpace(r.Header.Get("CF-Connecting-IP")); cfIP != "" {
+			if ip := net.ParseIP(cfIP); ip != nil {
+				return ip.String()
 			}
 		}
 	}
-	if xrip := strings.TrimSpace(r.Header.Get("X-Real-IP")); xrip != "" {
-		if ip := net.ParseIP(xrip); ip != nil {
-			return ip.String()
-		}
+
+	if remoteIP != nil {
+		return remoteIP.String()
 	}
-	host, _, err := net.SplitHostPort(r.RemoteAddr)
-	if err == nil {
-		if ip := net.ParseIP(host); ip != nil {
-			return ip.String()
-		}
-		return host
+	if remoteHost != "" {
+		return remoteHost
 	}
-	return r.RemoteAddr
+
+	return "127.0.0.1"
 }

@@ -113,11 +113,10 @@ func Load() *Config {
 			}
 		}
 	} else {
-		// Cloudflare Workers and Pages defaults for frontend deployments
+		// Specific authorized Cloudflare deployment origins for Spatial Watch
 		corsOrigins = []string{
-			"https://*.workers.dev",
-			"https://*.pages.dev",
 			"https://spatial-watch.aeemarrs.workers.dev",
+			"https://spatial-watch.pages.dev",
 		}
 	}
 
