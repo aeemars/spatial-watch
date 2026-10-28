@@ -46,12 +46,21 @@ func (h *Hub) Register(client *Client) {
 
 	log.Printf("[ws] participant %s joined room %s", client.ParticipantID, client.RoomCode)
 
-	// Broadcast join to other participants
+	count := len(h.rooms[client.RoomCode])
+
+	// Broadcast join to other participants with active count
 	h.broadcastToRoomLocked(client.RoomCode, &models.WSEvent{
 		Type:          "participant_joined",
 		ParticipantID: client.ParticipantID,
 		DisplayName:   client.DisplayName,
 		ServerTime:    time.Now().UnixMilli(),
+		Payload: map[string]interface{}{
+			"participantCount": count,
+			"participant": map[string]interface{}{
+				"participantId": client.ParticipantID,
+				"displayName":   client.DisplayName,
+			},
+		},
 	}, nil)
 }
 
@@ -65,14 +74,19 @@ func (h *Hub) Unregister(client *Client) {
 			delete(clients, client)
 			client.CloseSend()
 
+			count := len(clients)
 			log.Printf("[ws] participant %s left room %s", client.ParticipantID, client.RoomCode)
 
-			// Broadcast leave
+			// Broadcast leave with active count
 			h.broadcastToRoomLocked(client.RoomCode, &models.WSEvent{
 				Type:          "participant_left",
 				ParticipantID: client.ParticipantID,
 				DisplayName:   client.DisplayName,
 				ServerTime:    time.Now().UnixMilli(),
+				Payload: map[string]interface{}{
+					"participantCount": count,
+					"participantId":    client.ParticipantID,
+				},
 			}, nil)
 
 			// Clean up empty room

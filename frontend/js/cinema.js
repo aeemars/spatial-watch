@@ -108,17 +108,32 @@ const Cinema = (() => {
     if (overlay) overlay.hidden = true;
   }
 
-  // Participant seat markers
+  // Participant profile icons dock
   const seatMarkers = {};
-  const SEAT_POSITIONS = [
-    { x: -3, y: -1.5, z: -2 },
-    { x: -1.5, y: -1.5, z: -2.5 },
-    { x: 0, y: -1.5, z: -3 },
-    { x: 1.5, y: -1.5, z: -2.5 },
-    { x: 3, y: -1.5, z: -2 },
-    { x: -2.2, y: -1.5, z: -1 },
-    { x: 2.2, y: -1.5, z: -1 },
-  ];
+
+  // Formats up to 2 uppercase initials from a display name (e.g. "Horizon Voyage" -> "HV")
+  function formatInitials(name) {
+    if (!name || typeof name !== 'string') return '??';
+    const clean = name.trim();
+    if (!clean) return '??';
+    const words = clean.split(/\s+/).filter(Boolean);
+    if (words.length >= 2) {
+      return (words[0][0] + words[1][0]).toUpperCase();
+    }
+    return clean.substring(0, 2).toUpperCase();
+  }
+
+  // Positions profile icons on the left flank of the cinema screen:
+  // 1-2m distance to the left of the video frame outer edge (frame edge is x = -4.7)
+  function getProfileIconPosition(index) {
+    const row = index % 6;
+    const col = Math.floor(index / 6);
+    // Col 0 is at x = -6.1 (1.4m to the left of frame edge); Col 1 is at x = -6.8 (2.1m)
+    const x = -6.10 - (col * 0.70);
+    const y = 3.10 - (row * 0.58);
+    const z = -6.95;
+    return { x, y, z };
+  }
 
   let isMediaReadyState = false;
   let onEndedCallback = null;
@@ -254,10 +269,12 @@ const Cinema = (() => {
     };
     video.oncanplay = () => {
       hideBuffering();
+      updateScreenDimensions();
       isVideoTextureDirty = true;
     };
     video.onplaying = () => {
       hideBuffering();
+      updateScreenDimensions();
       registerVideoFrameCallback();
     };
     video.onpause = () => {
@@ -642,71 +659,106 @@ const Cinema = (() => {
     scene.add(violetLight);
   }
 
+  function createProfileBadgeTexture(initials) {
+    if (typeof document === 'undefined') return null;
+    const size = 256;
+    const canvas = document.createElement('canvas');
+    canvas.width = size;
+    canvas.height = size;
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return null;
+
+    // Clear transparent
+    ctx.clearRect(0, 0, size, size);
+
+    // Subtle gold glow aura
+    ctx.shadowColor = 'rgba(231, 188, 114, 0.45)';
+    ctx.shadowBlur = 14;
+    ctx.shadowOffsetX = 0;
+    ctx.shadowOffsetY = 0;
+
+    // Circular badge base
+    ctx.beginPath();
+    ctx.arc(size / 2, size / 2, size / 2 - 12, 0, Math.PI * 2);
+    ctx.closePath();
+
+    // Dark obsidian glass gradient
+    const bgGrad = ctx.createLinearGradient(0, 12, size, size - 12);
+    bgGrad.addColorStop(0, '#1c2236');
+    bgGrad.addColorStop(0.5, '#0e1220');
+    bgGrad.addColorStop(1, '#080a12');
+    ctx.fillStyle = bgGrad;
+    ctx.fill();
+
+    // Metallic gold bezel border
+    ctx.shadowBlur = 0;
+    const borderGrad = ctx.createLinearGradient(0, 0, size, size);
+    borderGrad.addColorStop(0, '#f9e2af');
+    borderGrad.addColorStop(0.5, '#e7bc72');
+    borderGrad.addColorStop(1, '#9b7430');
+    ctx.strokeStyle = borderGrad;
+    ctx.lineWidth = 6;
+    ctx.stroke();
+
+    // Inner subtle ring
+    ctx.beginPath();
+    ctx.arc(size / 2, size / 2, size / 2 - 20, 0, Math.PI * 2);
+    ctx.strokeStyle = 'rgba(255, 255, 255, 0.12)';
+    ctx.lineWidth = 1.5;
+    ctx.stroke();
+
+    // Initials typography (bold, crisp, modern)
+    ctx.fillStyle = '#F4F1EA';
+    ctx.font = '700 84px Inter, -apple-system, sans-serif';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText(initials, size / 2, size / 2 + 3);
+
+    const texture = new THREE.CanvasTexture(canvas);
+    texture.minFilter = THREE.LinearFilter;
+    texture.magFilter = THREE.LinearFilter;
+    return texture;
+  }
+
   function addSeatMarker(participantId, displayName, seatIndex) {
-    if (seatMarkers[participantId] || seatIndex >= SEAT_POSITIONS.length) return;
+    if (seatMarkers[participantId] || !scene) return;
 
-    const pos = SEAT_POSITIONS[seatIndex];
+    const idx = (typeof seatIndex === 'number' && seatIndex >= 0)
+      ? seatIndex
+      : Object.keys(seatMarkers).length;
 
-    const markerGeo = new THREE.SphereGeometry(0.2, 12, 12);
-    const markerMat = new THREE.MeshStandardMaterial({
-      color: 0xe7bc72,
-      emissive: 0xe7bc72,
-      emissiveIntensity: 0.3,
-      roughness: 0.4,
-      metalness: 0.6,
+    const pos = getProfileIconPosition(idx);
+    const initials = formatInitials(displayName);
+    const badgeTexture = createProfileBadgeTexture(initials);
+
+    const badgeGeo = new THREE.CircleGeometry(0.22, 32);
+    const badgeMat = new THREE.MeshBasicMaterial({
+      map: badgeTexture,
+      transparent: true,
+      side: THREE.DoubleSide,
     });
-    const marker = new THREE.Mesh(markerGeo, markerMat);
-    marker.position.set(pos.x, pos.y + 0.8, pos.z);
-    scene.add(marker);
+    const badgeMesh = new THREE.Mesh(badgeGeo, badgeMat);
+    badgeMesh.position.set(pos.x, pos.y, pos.z);
+    badgeMesh.rotation.y = 0.16; // subtly angled toward audience
+    scene.add(badgeMesh);
 
-    if (typeof document !== 'undefined') {
-      const labelCanvas = document.createElement('canvas');
-      labelCanvas.width = 256;
-      labelCanvas.height = 64;
-      const ctx = labelCanvas.getContext('2d');
-      if (ctx.roundRect) {
-        ctx.roundRect(0, 0, 256, 64, 10);
-      } else {
-        ctx.rect(0, 0, 256, 64);
-      }
-      ctx.fillStyle = '#F4F1EA';
-      ctx.font = '500 24px Inter, sans-serif';
-      ctx.textAlign = 'center';
-      ctx.textBaseline = 'middle';
-      ctx.fillText(displayName.substring(0, 14), 128, 32);
-
-      const labelTexture = new THREE.CanvasTexture(labelCanvas);
-      const labelGeo = new THREE.PlaneGeometry(1.2, 0.3);
-      const labelMat = new THREE.MeshBasicMaterial({
-        map: labelTexture,
-        transparent: true,
-      });
-      const label = new THREE.Mesh(labelGeo, labelMat);
-      label.position.set(pos.x, pos.y + 1.3, pos.z);
-      scene.add(label);
-
-      seatMarkers[participantId] = { marker, label };
-    } else {
-      seatMarkers[participantId] = { marker, label: null };
-    }
+    seatMarkers[participantId] = {
+      mesh: badgeMesh,
+      seatIndex: idx,
+      initials: initials,
+      displayName: displayName,
+    };
   }
 
   function removeSeatMarker(participantId) {
     const entry = seatMarkers[participantId];
     if (!entry) return;
-    if (scene) {
-      if (entry.marker) scene.remove(entry.marker);
-      if (entry.label) scene.remove(entry.label);
-    }
-    if (entry.marker) {
-      if (entry.marker.geometry) entry.marker.geometry.dispose();
-      if (entry.marker.material) entry.marker.material.dispose();
-    }
-    if (entry.label) {
-      if (entry.label.geometry) entry.label.geometry.dispose();
-      if (entry.label.material) {
-        if (entry.label.material.map) entry.label.material.map.dispose();
-        entry.label.material.dispose();
+    if (scene && entry.mesh) {
+      scene.remove(entry.mesh);
+      if (entry.mesh.geometry) entry.mesh.geometry.dispose();
+      if (entry.mesh.material) {
+        if (entry.mesh.material.map) entry.mesh.material.map.dispose();
+        entry.mesh.material.dispose();
       }
     }
     delete seatMarkers[participantId];

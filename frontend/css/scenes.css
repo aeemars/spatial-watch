@@ -695,3 +695,42 @@
     margin: 0 auto;
   }
 }
+
+/* Offscreen active video layout for WebGL / WebXR textures */
+.cinema-video-source {
+  position: fixed !important;
+  top: 0 !important;
+  left: 0 !important;
+  width: 1px !important;
+  height: 1px !important;
+  opacity: 0.001 !important;
+  pointer-events: none !important;
+  z-index: -100 !important;
+}
+
+/* Host controlled screening indicator for joined participants */
+.cinema-controls__broadcast-indicator {
+  display: flex;
+  align-items: center;
+}
+
+.broadcast-live-dot {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background-color: var(--gold, #e7bc72);
+  box-shadow: 0 0 8px var(--gold, #e7bc72);
+  margin-right: 6px;
+  animation: pulse-live 2s infinite ease-in-out;
+}
+
+@keyframes pulse-live {
+  0%, 100% { opacity: 1; transform: scale(1); }
+  50% { opacity: 0.35; transform: scale(0.85); }
+}
+
+.cinema-controls__progress.is-readonly {
+  pointer-events: none;
+  cursor: default;
+}

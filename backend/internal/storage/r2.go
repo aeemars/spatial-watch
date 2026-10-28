@@ -132,9 +132,14 @@ func (s *R2Storage) PresignPut(ctx context.Context, key string, contentType stri
 		}, nil
 	}
 
+	if contentType == "" {
+		contentType = "video/mp4"
+	}
+
 	putInput := &s3.PutObjectInput{
-		Bucket: aws.String(s.bucket),
-		Key:    aws.String(key),
+		Bucket:      aws.String(s.bucket),
+		Key:         aws.String(key),
+		ContentType: aws.String(contentType),
 	}
 
 	presignedReq, err := s.presignClient.PresignPutObject(ctx, putInput, s3.WithPresignExpires(lifetime))

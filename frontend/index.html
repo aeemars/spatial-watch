@@ -550,8 +550,8 @@
     <!-- SCREEN 3: Cinema (Desktop + VR)                 -->
     <!-- ═══════════════════════════════════════════════ -->
     <section class="screen screen--cinema" id="screen-cinema" aria-label="Cinema" hidden>
-      <!-- Video element (hidden, used as texture source) -->
-      <video id="cinema-video" crossorigin="anonymous" playsinline preload="auto" style="display:none;"></video>
+      <!-- Video element (active layout surface, used as texture source) -->
+      <video id="cinema-video" class="cinema-video-source" crossorigin="anonymous" playsinline preload="auto"></video>
 
       <!-- Three.js / WebXR canvas -->
       <canvas id="cinema-canvas" class="cinema-canvas"></canvas>
@@ -594,7 +594,8 @@
 
           <!-- Playback controls -->
           <div class="cinema-controls__playback">
-            <div class="cinema-controls__group">
+            <!-- Host Playback actions -->
+            <div class="cinema-controls__group" id="cinema-playback-group">
               <button class="btn btn--ghost btn--icon" id="btn-seek-back" type="button" aria-label="Back 10 seconds" title="Back 10s">
                 <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="1 4 1 10 7 10"/><path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10"/><text x="12" y="16" text-anchor="middle" fill="currentColor" stroke="none" font-size="8" font-weight="700">10</text></svg>
               </button>
@@ -607,6 +608,14 @@
               <button class="btn btn--ghost btn--icon" id="btn-seek-forward" type="button" aria-label="Forward 10 seconds" title="Forward 10s">
                 <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/><text x="12" y="16" text-anchor="middle" fill="currentColor" stroke="none" font-size="8" font-weight="700">10</text></svg>
               </button>
+            </div>
+
+            <!-- Joined user indicator (when not host) -->
+            <div class="cinema-controls__group cinema-controls__broadcast-indicator" id="cinema-broadcast-indicator" hidden>
+              <span class="chip chip--gold chip--sm">
+                <span class="broadcast-live-dot" aria-hidden="true"></span>
+                Host Controlled Screening
+              </span>
             </div>
 
             <!-- Reactions -->

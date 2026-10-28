@@ -1023,22 +1023,22 @@ const App = (() => {
         await ensureSession();
         if (progressLabel) progressLabel.textContent = 'Uploading directly to Cloudflare R2…';
 
+        const effectiveContentType = (uploadedFile.type && uploadedFile.type.startsWith('video/'))
+          ? uploadedFile.type
+          : 'video/mp4';
+
         // 1. Request presigned upload URL from backend
         presign = await API.presignUpload({
           fileName: uploadedFile.name,
           fileSize: uploadedFile.size,
-          contentType: uploadedFile.type || 'video/mp4',
+          contentType: effectiveContentType,
         });
 
         // 2. Direct browser-to-R2 PUT upload with progress
         await new Promise((resolve, reject) => {
           const xhr = new XMLHttpRequest();
           xhr.open('PUT', presign.uploadUrl, true);
-          if (uploadedFile.type) {
-            xhr.setRequestHeader('Content-Type', uploadedFile.type);
-          } else {
-            xhr.setRequestHeader('Content-Type', 'video/mp4');
-          }
+          xhr.setRequestHeader('Content-Type', effectiveContentType);
 
           xhr.upload.onprogress = (e) => {
             if (e.lengthComputable) {
@@ -1429,11 +1429,14 @@ const App = (() => {
       if (cinemaNameEl) cinemaNameEl.textContent = room.name || roomName;
       document.getElementById('cinema-participant-badge').textContent = (data.participants || []).length;
 
+      // Apply Host-Only playback authority controls
+      updateCinemaControlsAuthority(isHost);
+
       // Director's Cut state
       DirectorsCut.setEnabled(room.directorCutEnabled);
       DirectorsCut.startChecking(() => Cinema.getCurrentTime());
 
-      // Add seat markers for existing participants
+      // Add profile icon markers for existing participants on screen-left
       (data.participants || []).forEach((p, i) => {
         if (p.participantId !== participantId) {
           Cinema.addSeatMarker(p.participantId, p.displayName, i);
@@ -1449,30 +1452,54 @@ const App = (() => {
     });
   }
 
-  // ─── Playback Controls ────────────────────────────
+  // ─── Playback Controls & Authority ────────────────
+
+  function updateCinemaControlsAuthority(hostMode) {
+    const playbackGroup = document.getElementById('cinema-playback-group');
+    const broadcastIndicator = document.getElementById('cinema-broadcast-indicator');
+    const progressBar = document.getElementById('cinema-progress');
+
+    if (playbackGroup) playbackGroup.hidden = !hostMode;
+    if (broadcastIndicator) broadcastIndicator.hidden = hostMode;
+    if (progressBar) {
+      if (hostMode) {
+        progressBar.classList.remove('is-readonly');
+        progressBar.removeAttribute('disabled');
+      } else {
+        progressBar.classList.add('is-readonly');
+        progressBar.setAttribute('disabled', 'true');
+      }
+    }
+  }
 
   function handlePlayPause() {
+    if (!isHost) {
+      showToast('Playback is controlled by the screening host', 'info');
+      return;
+    }
     if (Cinema.isPlaying()) {
       Cinema.pause();
-      if (isHost) WS.sendPlayback('pause', Cinema.getCurrentTime());
+      WS.sendPlayback('pause', Cinema.getCurrentTime());
     } else {
       Cinema.play();
-      if (isHost) WS.sendPlayback('play', Cinema.getCurrentTime());
+      WS.sendPlayback('play', Cinema.getCurrentTime());
     }
   }
 
   function handleSeek(delta) {
+    if (!isHost) return;
     const newPos = Math.max(0, Cinema.getCurrentTime() + delta);
     Cinema.seek(newPos);
-    if (isHost) WS.sendPlayback('seek', newPos);
+    WS.sendPlayback('seek', newPos);
   }
 
   function handleProgressSeek(e) {
+    if (!isHost) return;
     const duration = Cinema.getDuration();
     if (!duration) return;
     const newPos = (e.target.value / 100) * duration;
     Cinema.seek(newPos);
-    if (isHost) WS.sendPlayback('seek', newPos);
+    WS.sendPlayback('seek', newPos);
   }
 
   function handleToggleDirectorCut() {
@@ -1633,8 +1660,9 @@ const App = (() => {
       if (currentScreen !== 'cinema') return;
       showControls();
 
-      // Keyboard shortcuts
+      // Keyboard shortcuts (Host only for playback control)
       if (e.target.tagName === 'INPUT') return;
+      if (!isHost) return;
       switch (e.key) {
         case ' ':
         case 'k':
@@ -1739,6 +1767,7 @@ const App = (() => {
 
       if (currentScreen === 'cinema') {
         document.getElementById('cinema-participant-badge').textContent = participants.length;
+        updateCinemaControlsAuthority(isHost);
 
         // Sync playback with drift tolerance & debouncing (no unconditional seek)
         syncPlaybackState(payload.position, payload.isPaused, payload.serverTime, false);
@@ -1746,6 +1775,18 @@ const App = (() => {
         DirectorsCut.setEnabled(payload.directorCutEnabled);
       }
     });
+
+    // Influx Shield: Debounced background reconciliation
+    let refreshLobbyDebounceTimer = null;
+    function debouncedRefreshLobby() {
+      if (refreshLobbyDebounceTimer) {
+        clearTimeout(refreshLobbyDebounceTimer);
+      }
+      refreshLobbyDebounceTimer = setTimeout(() => {
+        refreshLobbyDebounceTimer = null;
+        refreshLobby();
+      }, 500);
+    }
 
     WS.on('playback', (data) => {
       if (data.participantId === participantId) return; // Don't re-apply own actions
@@ -1765,18 +1806,62 @@ const App = (() => {
     });
 
     WS.on('participant_joined', (data) => {
-      showToast(`${data.displayName} joined`, 'success');
-      refreshLobby();
-      if (currentScreen === 'cinema') {
-        const idx = Object.keys(Cinema).length; // approximate seat index
-        Cinema.addSeatMarker(data.participantId, data.displayName, participants.length);
+      const pid = data.participantId;
+      const dName = data.displayName || 'Participant';
+      const pCount = (data.payload && typeof data.payload.participantCount === 'number')
+        ? data.payload.participantCount
+        : (participants.length + 1);
+
+      showToast(`${dName} joined`, 'success');
+
+      // 1. Instant optimistic synchronous presence update (0ms latency)
+      const existingIdx = participants.findIndex(p => p.participantId === pid);
+      if (existingIdx === -1) {
+        participants.push({ participantId: pid, displayName: dName });
+      } else {
+        participants[existingIdx].displayName = dName;
       }
+
+      // 2. Synchronous UI updates
+      if (currentScreen === 'lobby') {
+        updateParticipantList(participants);
+      }
+      if (currentScreen === 'cinema') {
+        const badge = document.getElementById('cinema-participant-badge');
+        if (badge) badge.textContent = pCount;
+        if (pid !== participantId) {
+          Cinema.addSeatMarker(pid, dName);
+        }
+      }
+
+      // 3. Influx Shield: Debounced background reconciliation
+      debouncedRefreshLobby();
     });
 
     WS.on('participant_left', (data) => {
-      showToast(`${data.displayName} left`);
-      refreshLobby();
-      Cinema.removeSeatMarker(data.participantId);
+      const pid = data.participantId;
+      const dName = data.displayName || 'Participant';
+      const pCount = (data.payload && typeof data.payload.participantCount === 'number')
+        ? data.payload.participantCount
+        : Math.max(0, participants.length - 1);
+
+      showToast(`${dName} left`);
+
+      // 1. Instant optimistic synchronous update
+      participants = participants.filter(p => p.participantId !== pid);
+
+      // 2. Synchronous UI updates
+      if (currentScreen === 'lobby') {
+        updateParticipantList(participants);
+      }
+      if (currentScreen === 'cinema') {
+        const badge = document.getElementById('cinema-participant-badge');
+        if (badge) badge.textContent = pCount;
+        Cinema.removeSeatMarker(pid);
+      }
+
+      // 3. Influx Shield: Debounced background reconciliation
+      debouncedRefreshLobby();
     });
 
     WS.on('director_cut', (data) => {
