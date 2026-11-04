@@ -26,9 +26,11 @@ func Middleware(authService *AuthService) mux.MiddlewareFunc {
 			user, err := authService.AuthenticateRequest(r)
 			if err != nil {
 				w.Header().Set("Content-Type", "application/json")
+				w.Header().Set("Cache-Control", "no-store, no-cache, must-revalidate, private")
+				w.Header().Set("Pragma", "no-cache")
 				w.WriteHeader(http.StatusUnauthorized)
 				json.NewEncoder(w).Encode(map[string]string{
-					"error": "Unauthorized",
+					"error": "Unauthorized: active guest session required",
 				})
 				return
 			}

@@ -144,7 +144,7 @@ func (h *Handler) GetSession(w http.ResponseWriter, r *http.Request) {
 func (h *Handler) UpdateProfile(w http.ResponseWriter, r *http.Request) {
 	authUser, ok := auth.GetAuthenticatedUser(r.Context())
 	if !ok {
-		respondError(w, http.StatusUnauthorized, "Unauthorized")
+		respondError(w, http.StatusUnauthorized, "Authentication required: active guest session required to update profile")
 		return
 	}
 
@@ -187,7 +187,7 @@ func (h *Handler) Logout(w http.ResponseWriter, r *http.Request) {
 func (h *Handler) CreateRoom(w http.ResponseWriter, r *http.Request) {
 	authUser, ok := auth.GetAuthenticatedUser(r.Context())
 	if !ok {
-		respondError(w, http.StatusUnauthorized, "Unauthorized")
+		respondError(w, http.StatusUnauthorized, "Authentication required: active guest session required to create a room")
 		return
 	}
 
@@ -386,7 +386,7 @@ func (h *Handler) CreateRoom(w http.ResponseWriter, r *http.Request) {
 func (h *Handler) JoinRoom(w http.ResponseWriter, r *http.Request) {
 	authUser, ok := auth.GetAuthenticatedUser(r.Context())
 	if !ok {
-		respondError(w, http.StatusUnauthorized, "Unauthorized")
+		respondError(w, http.StatusUnauthorized, "Authentication required: active guest session required to join a room")
 		return
 	}
 
@@ -459,7 +459,7 @@ func (h *Handler) GetRoom(w http.ResponseWriter, r *http.Request) {
 	vars := mux.Vars(r)
 	roomCode, err := auth.ValidateRoomCode(vars["roomCode"])
 	if err != nil {
-		respondError(w, http.StatusBadRequest, "Invalid room code")
+		respondError(w, http.StatusBadRequest, "Invalid room code format (must be 4-16 alphanumeric characters)")
 		return
 	}
 
@@ -501,9 +501,14 @@ func (h *Handler) GetRoom(w http.ResponseWriter, r *http.Request) {
 // GetUserRooms handles GET /api/user/rooms (Protected by auth middleware)
 // Returns all rooms (active and concluded) created by the user and joined by the user for record purposes
 func (h *Handler) GetUserRooms(w http.ResponseWriter, r *http.Request) {
+	if h.RoomRepo == nil || h.PartRepo == nil {
+		respondError(w, http.StatusServiceUnavailable, "Database repository unavailable")
+		return
+	}
+
 	authUser, ok := auth.GetAuthenticatedUser(r.Context())
-	if !ok {
-		respondError(w, http.StatusUnauthorized, "Unauthorized")
+	if !ok || authUser == nil || strings.TrimSpace(authUser.ID) == "" {
+		respondError(w, http.StatusUnauthorized, "Authentication required: active guest session required to view room records")
 		return
 	}
 
@@ -515,8 +520,8 @@ func (h *Handler) GetUserRooms(w http.ResponseWriter, r *http.Request) {
 	// 1. Fetch rooms created by user from active collection
 	createdRooms, err := h.RoomRepo.FindByHost(ctx, authUser.ID)
 	if err != nil {
-		log.Printf("[api] failed to fetch created rooms: %v", err)
-		respondError(w, http.StatusInternalServerError, "Failed to fetch room records")
+		log.Printf("[api] failed to fetch created rooms for %s: %v", authUser.ID, err)
+		respondError(w, http.StatusInternalServerError, "Unable to load created room records: database query error")
 		return
 	}
 
@@ -527,7 +532,12 @@ func (h *Handler) GetUserRooms(w http.ResponseWriter, r *http.Request) {
 	for _, room := range createdRooms {
 		createdCodeList = append(createdCodeList, room.RoomCode)
 	}
-	createdParticipantsMap, _ := h.PartRepo.FindParticipantsByRooms(ctx, createdCodeList)
+	var createdParticipantsMap map[string][]models.Participant
+	if len(createdCodeList) > 0 {
+		createdParticipantsMap, _ = h.PartRepo.FindParticipantsByRooms(ctx, createdCodeList)
+	} else {
+		createdParticipantsMap = make(map[string][]models.Participant)
+	}
 
 	for _, room := range createdRooms {
 		codeUpper := strings.ToUpper(room.RoomCode)
@@ -623,8 +633,8 @@ func (h *Handler) GetUserRooms(w http.ResponseWriter, r *http.Request) {
 	// 3. Fetch participation records for joined rooms
 	participations, err := h.PartRepo.FindByParticipantID(ctx, authUser.ID)
 	if err != nil {
-		log.Printf("[api] failed to fetch user participations: %v", err)
-		respondError(w, http.StatusInternalServerError, "Failed to fetch room records")
+		log.Printf("[api] failed to fetch user participations for %s: %v", authUser.ID, err)
+		respondError(w, http.StatusInternalServerError, "Unable to load joined room records: database query error")
 		return
 	}
 
@@ -642,68 +652,71 @@ func (h *Handler) GetUserRooms(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// 4. Fetch room entities for joined codes from active collection
-	joinedRooms, err := h.RoomRepo.FindByCodes(ctx, joinedCodes)
-	if err != nil {
-		log.Printf("[api] failed to fetch joined room entities: %v", err)
-		respondError(w, http.StatusInternalServerError, "Failed to fetch room records")
-		return
-	}
-
-	joinedParticipantsMap, _ := h.PartRepo.FindParticipantsByRooms(ctx, joinedCodes)
 	joinedRecords := make([]models.UserRoomRecord, 0)
 	handledJoinedCodes := make(map[string]bool)
 
-	for _, room := range joinedRooms {
-		codeUpper := strings.ToUpper(room.RoomCode)
-		if !includeInactive && !room.IsActive {
-			continue
+	if len(joinedCodes) > 0 {
+		joinedRooms, err := h.RoomRepo.FindByCodes(ctx, joinedCodes)
+		if err != nil {
+			log.Printf("[api] failed to fetch joined room entities: %v", err)
+			respondError(w, http.StatusInternalServerError, "Unable to load joined room details: database query error")
+			return
 		}
-		handledJoinedCodes[codeUpper] = true
-		parts := joinedParticipantsMap[codeUpper]
-		hostName := "Host"
-		for _, part := range parts {
-			if part.ParticipantID == room.HostParticipantID {
-				hostName = part.DisplayName
-				break
+
+		joinedParticipantsMap, _ := h.PartRepo.FindParticipantsByRooms(ctx, joinedCodes)
+
+		for _, room := range joinedRooms {
+			codeUpper := strings.ToUpper(room.RoomCode)
+			if !includeInactive && !room.IsActive {
+				continue
 			}
-		}
+			handledJoinedCodes[codeUpper] = true
+			parts := joinedParticipantsMap[codeUpper]
+			hostName := "Host"
+			for _, part := range parts {
+				if part.ParticipantID == room.HostParticipantID {
+					hostName = part.DisplayName
+					break
+				}
+			}
 
-		mediaTitle := models.FormatMediaTitle(room.MediaTitle, room.MediaURL)
-		sourceType := room.MediaSourceType
-		if sourceType == "" {
-			sourceType = "catalog"
-		}
-		concludedAt := time.Time{}
-		concludedReason := ""
-		if !room.IsActive || room.IsCompleted {
-			concludedAt = room.UpdatedAt
-			concludedReason = "screening_concluded"
-		}
+			mediaTitle := models.FormatMediaTitle(room.MediaTitle, room.MediaURL)
+			sourceType := room.MediaSourceType
+			if sourceType == "" {
+				sourceType = "catalog"
+			}
+			concludedAt := time.Time{}
+			concludedReason := ""
+			if !room.IsActive || room.IsCompleted {
+				concludedAt = room.UpdatedAt
+				concludedReason = "screening_concluded"
+			}
 
-		joinedRecords = append(joinedRecords, models.UserRoomRecord{
-			RoomCode:          room.RoomCode,
-			Name:              room.Name,
-			HostDisplayName:   hostName,
-			HostParticipantID: room.HostParticipantID,
-			MediaSourceType:   sourceType,
-			MediaAssetID:      room.MediaAssetID,
-			MediaTitle:        mediaTitle,
-			MediaURL:          room.MediaURL,
-			DurationSeconds:   room.DurationSeconds,
-			ExpiresAt:         room.ExpiresAt,
-			ConcludedAt:       concludedAt,
-			ParticipantCount:  len(parts),
-			CreatedAt:         room.CreatedAt,
-			JoinedAt:          joinedAtMap[codeUpper],
-			IsHost:            false,
-			IsActive:          room.IsActive,
-			IsCompleted:       !room.IsActive || room.IsCompleted,
-			ConcludedReason:   concludedReason,
-		})
+			joinedRecords = append(joinedRecords, models.UserRoomRecord{
+				RoomCode:          room.RoomCode,
+				Name:              room.Name,
+				HostDisplayName:   hostName,
+				HostParticipantID: room.HostParticipantID,
+				MediaSourceType:   sourceType,
+				MediaAssetID:      room.MediaAssetID,
+				MediaTitle:        mediaTitle,
+				MediaURL:          room.MediaURL,
+				DurationSeconds:   room.DurationSeconds,
+				ExpiresAt:         room.ExpiresAt,
+				ConcludedAt:       concludedAt,
+				ParticipantCount:  len(parts),
+				CreatedAt:         room.CreatedAt,
+				JoinedAt:          joinedAtMap[codeUpper],
+				IsHost:            false,
+				IsActive:          room.IsActive,
+				IsCompleted:       !room.IsActive || room.IsCompleted,
+				ConcludedReason:   concludedReason,
+			})
+		}
 	}
 
 	// 5. Fetch archived/expired entities for joined codes from expiredRooms collection
-	if h.ExpiredRoomRepo != nil && includeInactive {
+	if h.ExpiredRoomRepo != nil && includeInactive && len(joinedCodes) > 0 {
 		expiredJoined, err := h.ExpiredRoomRepo.FindByCodes(ctx, joinedCodes)
 		if err == nil {
 			for _, exp := range expiredJoined {
@@ -841,14 +854,14 @@ func (h *Handler) archiveRoomSnapshot(ctx context.Context, room *models.Room, re
 func (h *Handler) ShutdownRoom(w http.ResponseWriter, r *http.Request) {
 	authUser, ok := auth.GetAuthenticatedUser(r.Context())
 	if !ok {
-		respondError(w, http.StatusUnauthorized, "Unauthorized")
+		respondError(w, http.StatusUnauthorized, "Authentication required: active guest session required to shut down a room")
 		return
 	}
 
 	vars := mux.Vars(r)
 	roomCode, err := auth.ValidateRoomCode(vars["roomCode"])
 	if err != nil {
-		respondError(w, http.StatusBadRequest, "Invalid room code")
+		respondError(w, http.StatusBadRequest, "Invalid room code format (must be 4-16 alphanumeric characters)")
 		return
 	}
 
@@ -857,7 +870,7 @@ func (h *Handler) ShutdownRoom(w http.ResponseWriter, r *http.Request) {
 
 	room, err := h.RoomRepo.FindByCode(ctx, roomCode)
 	if err != nil {
-		respondError(w, http.StatusNotFound, "Room not found")
+		respondError(w, http.StatusNotFound, "Room not found or has already been closed")
 		return
 	}
 
@@ -890,14 +903,14 @@ func (h *Handler) ShutdownRoom(w http.ResponseWriter, r *http.Request) {
 func (h *Handler) LeaveRoom(w http.ResponseWriter, r *http.Request) {
 	authUser, ok := auth.GetAuthenticatedUser(r.Context())
 	if !ok {
-		respondError(w, http.StatusUnauthorized, "Unauthorized")
+		respondError(w, http.StatusUnauthorized, "Authentication required: active guest session required to leave a room")
 		return
 	}
 
 	vars := mux.Vars(r)
 	roomCode, err := auth.ValidateRoomCode(vars["roomCode"])
 	if err != nil {
-		respondError(w, http.StatusBadRequest, "Invalid room code")
+		respondError(w, http.StatusBadRequest, "Invalid room code format (must be 4-16 alphanumeric characters)")
 		return
 	}
 
@@ -926,7 +939,7 @@ func (h *Handler) GetCommentary(w http.ResponseWriter, r *http.Request) {
 	vars := mux.Vars(r)
 	roomCode, err := auth.ValidateRoomCode(vars["roomCode"])
 	if err != nil {
-		respondError(w, http.StatusBadRequest, "Invalid room code")
+		respondError(w, http.StatusBadRequest, "Invalid room code format (must be 4-16 alphanumeric characters)")
 		return
 	}
 

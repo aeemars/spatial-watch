@@ -170,7 +170,7 @@ func (s *AuthService) GetOrCreateSession(w http.ResponseWriter, r *http.Request)
 	}
 
 	// 5. Send raw token once in HttpOnly session cookie
-	s.SetSessionCookie(w, rawToken)
+	s.SetSessionCookieWithRequest(w, r, rawToken)
 
 	sanitized := user.ToSanitized()
 	return &sanitized, nil
@@ -228,8 +228,20 @@ func (s *AuthService) Logout(w http.ResponseWriter, r *http.Request) error {
 		tokenHash := HashToken(cookie.Value)
 		_ = s.sessionRepo.DeleteByTokenHash(r.Context(), tokenHash)
 	}
-	s.ClearSessionCookie(w)
+	s.ClearSessionCookieWithRequest(w, r)
 	return nil
+}
+
+// isLocalhostRequest returns true if the incoming request is directed to localhost or loopback
+func isLocalhostRequest(r *http.Request) bool {
+	if r == nil {
+		return false
+	}
+	host := r.Host
+	if h, _, err := net.SplitHostPort(r.Host); err == nil {
+		host = h
+	}
+	return host == "localhost" || host == "127.0.0.1" || host == "::1"
 }
 
 // resolveSameSite maps the configured CookieSameSite string to http.SameSite and determines if Secure is required
@@ -251,8 +263,20 @@ func (s *AuthService) resolveSameSite() (http.SameSite, bool) {
 
 // SetSessionCookie writes the sw_session cookie to ResponseWriter
 func (s *AuthService) SetSessionCookie(w http.ResponseWriter, rawToken string) {
+	s.SetSessionCookieWithRequest(w, nil, rawToken)
+}
+
+// SetSessionCookieWithRequest writes the sw_session cookie, auto-relaxing Secure on plain HTTP localhost
+func (s *AuthService) SetSessionCookieWithRequest(w http.ResponseWriter, r *http.Request, rawToken string) {
 	maxAge := int(s.SessionDuration().Seconds())
 	sameSiteMode, secure := s.resolveSameSite()
+
+	// If request is strictly plain HTTP on localhost, relax Secure attribute so local development does not drop cookie
+	if r != nil && secure && isLocalhostRequest(r) && r.TLS == nil && r.Header.Get("X-Forwarded-Proto") != "https" {
+		if sameSiteMode != http.SameSiteNoneMode {
+			secure = false
+		}
+	}
 
 	cookie := &http.Cookie{
 		Name:     CookieSessionName,
@@ -273,7 +297,17 @@ func (s *AuthService) SetSessionCookie(w http.ResponseWriter, rawToken string) {
 
 // ClearSessionCookie overwrites the sw_session cookie with an expired value
 func (s *AuthService) ClearSessionCookie(w http.ResponseWriter) {
+	s.ClearSessionCookieWithRequest(w, nil)
+}
+
+// ClearSessionCookieWithRequest overwrites the sw_session cookie with an expired value, respecting request context
+func (s *AuthService) ClearSessionCookieWithRequest(w http.ResponseWriter, r *http.Request) {
 	sameSiteMode, secure := s.resolveSameSite()
+	if r != nil && secure && isLocalhostRequest(r) && r.TLS == nil && r.Header.Get("X-Forwarded-Proto") != "https" {
+		if sameSiteMode != http.SameSiteNoneMode {
+			secure = false
+		}
+	}
 
 	cookie := &http.Cookie{
 		Name:     CookieSessionName,

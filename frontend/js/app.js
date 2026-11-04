@@ -253,12 +253,21 @@ const App = (() => {
   // ─── Guest Session & Identity ─────────────────────
   let sessionInitPromise = null;
 
-  function ensureSession() {
-    if (currentUser) return Promise.resolve(currentUser);
+  async function ensureSession() {
+    if (currentUser) return currentUser;
     if (!sessionInitPromise) {
-      sessionInitPromise = initSession();
+      sessionInitPromise = initSession().finally(() => {
+        if (!currentUser) {
+          sessionInitPromise = null;
+        }
+      });
     }
-    return sessionInitPromise;
+    const user = await sessionInitPromise;
+    if (!user) {
+      sessionInitPromise = null;
+      throw new Error('Active guest session could not be established. Please check your connection and retry.');
+    }
+    return user;
   }
 
   async function initSession() {
@@ -278,6 +287,7 @@ const App = (() => {
         return currentUser;
       } catch (e) {
         console.error('[auth] could not initialize session:', e);
+        sessionInitPromise = null;
         const chipName = document.getElementById('profile-chip-name');
         if (chipName && chipName.textContent === 'Loading…') {
           chipName.textContent = 'Guest';
@@ -359,13 +369,17 @@ const App = (() => {
 
     try {
       await API.logout();
+      currentUser = null;
+      sessionInitPromise = null;
       const res = await API.getSession();
       currentUser = res.user;
       applyCurrentUser();
+      updateRecordsBadge();
       closeModal('modal-profile');
       showToast('Guest identity reset', 'info');
     } catch (err) {
-      showToast('Failed to reset identity', 'error');
+      sessionInitPromise = null;
+      showToast((err && err.message) ? err.message : 'Failed to reset identity', 'error');
     }
   }
 
@@ -2066,10 +2080,13 @@ const App = (() => {
     if (loadingEl) loadingEl.hidden = false;
 
     try {
-      await ensureSession();
+      const user = await ensureSession();
+      if (!user) {
+        throw new Error('Active guest session could not be established. Please check your connection and retry.');
+      }
       const data = await API.getUserRooms();
-      let createdRooms = data.createdRooms || [];
-      let joinedRooms = data.joinedRooms || [];
+      let createdRooms = (data && data.createdRooms) || [];
+      let joinedRooms = (data && data.joinedRooms) || [];
 
       // Sort: active rooms first, then by date descending
       const sortRooms = (a, b) => {
@@ -2141,7 +2158,26 @@ const App = (() => {
       }
     } catch (e) {
       console.error('[records] failed to load room records:', e);
-      showToast('Failed to load room records', 'error');
+      const errorMsg = (e && e.message) ? e.message : 'Failed to load room records';
+      showToast(errorMsg, 'error');
+
+      // Render actionable error state inside the modal
+      if (listCreated) {
+        listCreated.innerHTML = `
+          <div class="records-error-state" style="text-align:center; padding: 2.5rem 1rem;">
+            <div style="font-size: 2.2rem; margin-bottom: 0.75rem;">⚠️</div>
+            <h4 style="margin: 0 0 0.5rem; color: var(--color-text-primary, #fff); font-size: 1.1rem;">Failed to Load Room Records</h4>
+            <p style="margin: 0 0 1.25rem; color: var(--color-text-secondary, rgba(255,255,255,0.7)); font-size: 0.9rem; max-width: 380px; margin-left: auto; margin-right: auto;">${escapeHtml(errorMsg)}</p>
+            <button class="btn btn--secondary btn--sm" id="btn-retry-records" type="button">Retry</button>
+          </div>
+        `;
+        const retryBtn = document.getElementById('btn-retry-records');
+        if (retryBtn) {
+          retryBtn.addEventListener('click', () => loadUserRooms());
+        }
+      }
+      if (emptyCreated) emptyCreated.hidden = true;
+      if (emptyJoined) emptyJoined.hidden = true;
     } finally {
       if (loadingEl) loadingEl.hidden = true;
     }
