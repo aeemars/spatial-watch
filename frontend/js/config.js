@@ -20,6 +20,6 @@
        window.ENV_API_URL = 'https://api.spatialwatch.com';
    ═══════════════════════════════════════════════════════════ */
 
-// When running locally or deploying same-origin, leave empty ('') to use window.location.origin
-window.ENV_API_URL = '';
-window.ENV_WS_URL = '';
+// Production PXXL Backend Endpoint (ignored on localhost/127.0.0.1/LAN IPs)
+window.ENV_API_URL = 'https://spatial-watch.pxxlspace.cv';
+window.ENV_WS_URL = 'wss://spatial-watch.pxxlspace.cv';

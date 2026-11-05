@@ -19,7 +19,10 @@ const WS = (() => {
       location.hostname === 'localhost' ||
       location.hostname === '127.0.0.1' ||
       location.hostname === '[::1]' ||
-      location.hostname.endsWith('.local')
+      location.hostname.endsWith('.local') ||
+      /^192\.168\./.test(location.hostname) ||
+      /^10\./.test(location.hostname) ||
+      /^172\.(1[6-9]|2\d|3[01])\./.test(location.hostname)
     );
 
     if (!isLocalHost && window.ENV_WS_URL && typeof window.ENV_WS_URL === 'string' && window.ENV_WS_URL.trim() !== '') {

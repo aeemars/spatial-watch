@@ -9,7 +9,10 @@ const API = (() => {
     window.location.hostname === 'localhost' ||
     window.location.hostname === '127.0.0.1' ||
     window.location.hostname === '[::1]' ||
-    window.location.hostname.endsWith('.local')
+    window.location.hostname.endsWith('.local') ||
+    /^192\.168\./.test(window.location.hostname) ||
+    /^10\./.test(window.location.hostname) ||
+    /^172\.(1[6-9]|2\d|3[01])\./.test(window.location.hostname)
   );
 
   const BASE = (!isLocalHost && window.ENV_API_URL && typeof window.ENV_API_URL === 'string' && window.ENV_API_URL.trim() !== '')
