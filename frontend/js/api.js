@@ -4,9 +4,17 @@
    ═══════════════════════════════════════════════════════════ */
 
 const API = (() => {
-  const BASE = (window.ENV_API_URL && typeof window.ENV_API_URL === 'string' && window.ENV_API_URL.trim() !== '')
+  const isLocalHost = typeof window !== 'undefined' && window.location && (
+    !window.location.hostname ||
+    window.location.hostname === 'localhost' ||
+    window.location.hostname === '127.0.0.1' ||
+    window.location.hostname === '[::1]' ||
+    window.location.hostname.endsWith('.local')
+  );
+
+  const BASE = (!isLocalHost && window.ENV_API_URL && typeof window.ENV_API_URL === 'string' && window.ENV_API_URL.trim() !== '')
     ? window.ENV_API_URL.trim().replace(/\/+$/, '')
-    : window.location.origin;
+    : (typeof window !== 'undefined' && window.location ? window.location.origin : '');
   let sessionPromise = null;
 
   async function request(method, path, body, isRetry = false) {

@@ -553,6 +553,44 @@ func TestGuestLeaveRoom(t *testing.T) {
 	}
 }
 
+// Brand new guest account with no previous created/joined history returns 200 OK with empty records
+func TestNewGuestEmptyRoomRecords(t *testing.T) {
+	rig := setupTestRig()
+
+	_, newGuestCookie := createTestGuestSession(t, rig)
+
+	// Brand new account queries room records
+	req, _ := http.NewRequest("GET", "/api/user/rooms?includeInactive=true", nil)
+	req.AddCookie(newGuestCookie)
+	rr := httptest.NewRecorder()
+	rig.Router.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("Expected 200 OK for new account room records, got %d: %s", rr.Code, rr.Body.String())
+	}
+
+	var userRooms models.UserRoomsResponse
+	if err := json.Unmarshal(rr.Body.Bytes(), &userRooms); err != nil {
+		t.Fatalf("Failed to decode user rooms JSON: %v", err)
+	}
+
+	if userRooms.CreatedRooms == nil || len(userRooms.CreatedRooms) != 0 {
+		t.Fatalf("Expected empty slice for created rooms on new account, got %v", userRooms.CreatedRooms)
+	}
+	if userRooms.JoinedRooms == nil || len(userRooms.JoinedRooms) != 0 {
+		t.Fatalf("Expected empty slice for joined rooms on new account, got %v", userRooms.JoinedRooms)
+	}
+
+	// Verify JSON serialization contains empty arrays and not null
+	bodyStr := rr.Body.String()
+	if !strings.Contains(bodyStr, `"createdRooms":[]`) {
+		t.Errorf("Expected JSON to have createdRooms:[], got %s", bodyStr)
+	}
+	if !strings.Contains(bodyStr, `"joinedRooms":[]`) {
+		t.Errorf("Expected JSON to have joinedRooms:[], got %s", bodyStr)
+	}
+}
+
 // Host can shut down / delete room, preventing further access and removing from records
 func TestHostShutdownRoom(t *testing.T) {
 	rig := setupTestRig()

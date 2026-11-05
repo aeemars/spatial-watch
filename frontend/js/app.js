@@ -2158,7 +2158,7 @@ const App = (() => {
       }
     } catch (e) {
       console.error('[records] failed to load room records:', e);
-      const errorMsg = (e && e.message) ? e.message : 'Failed to load room records';
+      const errorMsg = (e && e.message) ? e.message : 'Unable to connect to cinema server. Please check your connection.';
       showToast(errorMsg, 'error');
 
       // Render actionable error state inside the modal
@@ -2166,7 +2166,7 @@ const App = (() => {
         listCreated.innerHTML = `
           <div class="records-error-state" style="text-align:center; padding: 2.5rem 1rem;">
             <div style="font-size: 2.2rem; margin-bottom: 0.75rem;">⚠️</div>
-            <h4 style="margin: 0 0 0.5rem; color: var(--color-text-primary, #fff); font-size: 1.1rem;">Failed to Load Room Records</h4>
+            <h4 style="margin: 0 0 0.5rem; color: var(--color-text-primary, #fff); font-size: 1.1rem;">Unable to Load Room Records</h4>
             <p style="margin: 0 0 1.25rem; color: var(--color-text-secondary, rgba(255,255,255,0.7)); font-size: 0.9rem; max-width: 380px; margin-left: auto; margin-right: auto;">${escapeHtml(errorMsg)}</p>
             <button class="btn btn--secondary btn--sm" id="btn-retry-records" type="button">Retry</button>
           </div>

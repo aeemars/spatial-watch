@@ -138,7 +138,7 @@ describe('Spatial Watch — Room Records & API Security Tests', () => {
     try {
       throw simulatedApiError;
     } catch (e) {
-      const errorMsg = (e && e.message) ? e.message : 'Failed to load room records';
+      const errorMsg = (e && e.message) ? e.message : 'Unable to connect to cinema server. Please check your connection.';
       showToast(errorMsg, 'error');
 
       if (listCreated) {

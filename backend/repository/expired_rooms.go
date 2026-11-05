@@ -2,6 +2,7 @@ package repository
 
 import (
 	"context"
+	"log"
 	"sort"
 	"strings"
 	"sync"
@@ -70,16 +71,14 @@ func (r *ExpiredRoomRepo) FindByHost(ctx context.Context, hostParticipantID stri
 		opts := options.Find().SetSort(bson.D{{Key: "concludedAt", Value: -1}})
 		filter := bson.M{"hostParticipantId": hostParticipantID}
 		cursor, err := r.col.Find(ctx, filter, opts)
-		if err != nil {
-			return nil, err
+		if err == nil {
+			defer cursor.Close(ctx)
+			var rooms []models.ExpiredRoom
+			if err := cursor.All(ctx, &rooms); err == nil {
+				return rooms, nil
+			}
 		}
-		defer cursor.Close(ctx)
-
-		var rooms []models.ExpiredRoom
-		if err := cursor.All(ctx, &rooms); err != nil {
-			return nil, err
-		}
-		return rooms, nil
+		log.Printf("[mongo] ExpiredRoomRepo FindByHost error: %v — reading from memory fallback", err)
 	}
 
 	r.mu.RLock()
@@ -111,16 +110,14 @@ func (r *ExpiredRoomRepo) FindByCodes(ctx context.Context, codes []string) ([]mo
 		opts := options.Find().SetSort(bson.D{{Key: "concludedAt", Value: -1}})
 		filter := bson.M{"roomCode": bson.M{"$in": upperCodes}}
 		cursor, err := r.col.Find(ctx, filter, opts)
-		if err != nil {
-			return nil, err
+		if err == nil {
+			defer cursor.Close(ctx)
+			var rooms []models.ExpiredRoom
+			if err := cursor.All(ctx, &rooms); err == nil {
+				return rooms, nil
+			}
 		}
-		defer cursor.Close(ctx)
-
-		var rooms []models.ExpiredRoom
-		if err := cursor.All(ctx, &rooms); err != nil {
-			return nil, err
-		}
-		return rooms, nil
+		log.Printf("[mongo] ExpiredRoomRepo FindByCodes error: %v — reading from memory fallback", err)
 	}
 
 	r.mu.RLock()

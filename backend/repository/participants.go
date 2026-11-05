@@ -3,6 +3,7 @@ package repository
 import (
 	"context"
 	"fmt"
+	"log"
 	"strings"
 	"sync"
 	"time"
@@ -134,20 +135,17 @@ func (r *ParticipantRepo) FindParticipantsByRooms(ctx context.Context, roomCodes
 			"roomCode": bson.M{"$in": upperCodes},
 			"hasLeft":  bson.M{"$ne": true},
 		})
-		if err != nil {
-			return nil, err
+		if err == nil {
+			defer cursor.Close(ctx)
+			var participants []models.Participant
+			if err := cursor.All(ctx, &participants); err == nil {
+				for _, p := range participants {
+					result[p.RoomCode] = append(result[p.RoomCode], p)
+				}
+				return result, nil
+			}
 		}
-		defer cursor.Close(ctx)
-
-		var participants []models.Participant
-		if err := cursor.All(ctx, &participants); err != nil {
-			return nil, err
-		}
-		
-		for _, p := range participants {
-			result[p.RoomCode] = append(result[p.RoomCode], p)
-		}
-		return result, nil
+		log.Printf("[mongo] FindParticipantsByRooms error: %v — reading from memory fallback", err)
 	}
 
 	r.mu.RLock()
@@ -174,16 +172,14 @@ func (r *ParticipantRepo) FindByParticipantID(ctx context.Context, participantID
 			"participantId": participantID,
 			"hasLeft":       bson.M{"$ne": true},
 		}, opts)
-		if err != nil {
-			return nil, err
+		if err == nil {
+			defer cursor.Close(ctx)
+			var participants []models.Participant
+			if err := cursor.All(ctx, &participants); err == nil {
+				return participants, nil
+			}
 		}
-		defer cursor.Close(ctx)
-
-		var participants []models.Participant
-		if err := cursor.All(ctx, &participants); err != nil {
-			return nil, err
-		}
-		return participants, nil
+		log.Printf("[mongo] FindByParticipantID error: %v — reading from memory fallback", err)
 	}
 	r.mu.RLock()
 	defer r.mu.RUnlock()

@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/rand"
 	"fmt"
+	"log"
 	"math/big"
 	"regexp"
 	"sort"
@@ -144,16 +145,15 @@ func (r *RoomRepo) FindByHost(ctx context.Context, hostParticipantID string) ([]
 			"hostParticipantId": hostParticipantID,
 		}
 		cursor, err := r.col.Find(ctx, filter, opts)
-		if err != nil {
-			return nil, err
+		if err == nil {
+			defer cursor.Close(ctx)
+			var rooms []models.Room
+			if err := cursor.All(ctx, &rooms); err == nil {
+				return rooms, nil
+			}
 		}
-		defer cursor.Close(ctx)
-
-		var rooms []models.Room
-		if err := cursor.All(ctx, &rooms); err != nil {
-			return nil, err
-		}
-		return rooms, nil
+		// If MongoDB is transiently unreachable or timed out, log and gracefully fall back to memory
+		log.Printf("[mongo] FindByHost error: %v — reading from memory fallback", err)
 	}
 
 	r.mu.RLock()
@@ -187,16 +187,14 @@ func (r *RoomRepo) FindByCodes(ctx context.Context, codes []string) ([]models.Ro
 			"roomCode": bson.M{"$in": upperCodes},
 		}
 		cursor, err := r.col.Find(ctx, filter, opts)
-		if err != nil {
-			return nil, err
+		if err == nil {
+			defer cursor.Close(ctx)
+			var rooms []models.Room
+			if err := cursor.All(ctx, &rooms); err == nil {
+				return rooms, nil
+			}
 		}
-		defer cursor.Close(ctx)
-
-		var rooms []models.Room
-		if err := cursor.All(ctx, &rooms); err != nil {
-			return nil, err
-		}
-		return rooms, nil
+		log.Printf("[mongo] FindByCodes error: %v — reading from memory fallback", err)
 	}
 
 	r.mu.RLock()
