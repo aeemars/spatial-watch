@@ -97,10 +97,38 @@ func (s *AuthService) SessionDuration() time.Duration {
 	return time.Duration(days) * 24 * time.Hour
 }
 
+// CookieSameSiteLabel returns a human-readable label of the active SameSite cookie mode.
+// Exposed via /health so operators can quickly confirm cross-origin cookie settings in production.
+func (s *AuthService) CookieSameSiteLabel() string {
+	sameSite := strings.ToLower(strings.TrimSpace(s.cfg.CookieSameSite))
+	secure := s.cfg.CookieSecure
+	switch sameSite {
+	case "none":
+		return "SameSite=None; Secure=true (cross-origin OK)"
+	case "strict":
+		return "SameSite=Strict; Secure=" + boolLabel(secure)
+	default:
+		return "SameSite=Lax; Secure=" + boolLabel(secure) + " ⚠️ cross-origin sessions will not work"
+	}
+}
+
+func boolLabel(b bool) string {
+	if b {
+		return "true"
+	}
+	return "false"
+}
+
 // GetOrCreateSession retrieves the active authenticated user from the cookie,
 // or creates a new guest identity and issues a session cookie if missing/stale/expired.
 func (s *AuthService) GetOrCreateSession(w http.ResponseWriter, r *http.Request) (*models.SanitizedUser, error) {
-	ctx := r.Context()
+	// Use a fresh background context (with a 15s write deadline) for all DB writes so that
+	// the HTTP request context being cancelled mid-flight (e.g. client disconnect) cannot
+	// orphan a half-written user+session pair in MongoDB.
+	readCtx := r.Context()
+	writeCtx, writeCancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer writeCancel()
+	ctx := readCtx // reads use request context (inherits deadline from handler)
 
 	// 1. Check existing cookie
 	if cookie, err := r.Cookie(CookieSessionName); err == nil && strings.TrimSpace(cookie.Value) != "" {
@@ -146,7 +174,7 @@ func (s *AuthService) GetOrCreateSession(w http.ResponseWriter, r *http.Request)
 		LastSeenAt:  now,
 	}
 
-	if err := s.userRepo.Create(ctx, user); err != nil {
+	if err := s.userRepo.Create(writeCtx, user); err != nil {
 		return nil, err
 	}
 
@@ -165,7 +193,7 @@ func (s *AuthService) GetOrCreateSession(w http.ResponseWriter, r *http.Request)
 		LastSeenAt: now,
 	}
 
-	if err := s.sessionRepo.Create(ctx, session); err != nil {
+	if err := s.sessionRepo.Create(writeCtx, session); err != nil {
 		return nil, err
 	}
 

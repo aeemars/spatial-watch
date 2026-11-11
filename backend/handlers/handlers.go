@@ -77,16 +77,23 @@ func NewHandler(
 	}
 }
 
-// Health returns service health status and active persistence engine
+// Health returns service health status, active persistence engine, and cookie configuration.
+// This endpoint is public and unauthenticated — safe to expose as it contains no secrets.
 func (h *Handler) Health(w http.ResponseWriter, r *http.Request) {
 	persistence := "in-memory"
 	if h.RoomRepo != nil && h.RoomRepo.IsMongo() {
 		persistence = "mongodb"
 	}
 
+	cookieMode := "unknown"
+	if h.AuthService != nil {
+		cookieMode = h.AuthService.CookieSameSiteLabel()
+	}
+
 	respondJSON(w, http.StatusOK, map[string]interface{}{
 		"status":      "ok",
 		"persistence": persistence,
+		"cookieMode":  cookieMode,
 		"time":        time.Now().UTC().Format(time.RFC3339),
 	})
 }

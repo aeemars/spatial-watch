@@ -94,6 +94,12 @@ func main() {
 
 	// Initialize auth service
 	authService := auth.NewAuthService(userRepo, sessionRepo, cfg)
+	log.Printf("  Cookie: %s", authService.CookieSameSiteLabel())
+	if cfg.CookieSameSite != "none" {
+		log.Println("  ⚠️  WARNING: Cookie is NOT SameSite=None. Cross-origin requests from Cloudflare Workers/Pages")
+		log.Println("              will not send the sw_session cookie — sessions will not persist across page loads.")
+		log.Println("              Fix: set PUBLIC_BASE_URL=https://<your-pxxl-host> (or COOKIE_SAMESITE=none + COOKIE_SECURE=true).")
+	}
 
 	// Seed default data
 	seed.Run(commentRepo, mediaAssetRepo)
