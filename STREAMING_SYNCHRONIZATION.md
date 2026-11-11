@@ -381,3 +381,5 @@ The synchronization engine is protected by automated tests in both Node.js and G
 | Desktop Pixel Ratio | `frontend/js/cinema.js` | `1.5` | Balances retina display crispness with frame pacing stability. |
 | Presence Heartbeat / Ping | `backend/websocket/client.go` | `30s / 60s` | Ensures dead connections and closed browser tabs disconnect cleanly. |
 
+
+Aeeem
